@@ -904,8 +904,12 @@ Future `howl orchestrate` runs for this mission must perform, in order:
 7. **Final acceptance.** Confirm every Definition of Done item with
    evidence.
 8. **Completion report.** Produce the report defined in section 26.
+9. **Successor generation.** Synthesize `docs/MISSION_002.md` per
+   section 27 when the evidence supports proceeding.
 
-Do not begin Mission 002 automatically.
+Do not begin Mission 002 automatically. Generating the Mission 002
+specification is allowed and expected; executing Mission 002 from within
+Mission 001 is forbidden.
 
 ---
 
@@ -967,4 +971,78 @@ At the end of Mission 001, Howl must produce a final report containing:
 - **Recommended Mission 002:** a short recommendation consistent with
   section 22.
 
+The completion report must end with this Factory handoff trailer (see
+`docs/MISSION_FRAMEWORK.md` section 5):
+
+```
+MISSION_STATUS:
+NEXT_MISSION:
+OPEN_P0:
+OPEN_P1:
+OPEN_P2:
+OPEN_P3:
+BLOCKED:
+CONSUMER_VALUE_DELIVERED:
+RECOMMENDED_PRIORITY:
+FACTORY_NOTES:
+```
+
 Do NOT execute Mission 002.
+
+---
+
+## 27. Successor Mission Contract
+
+After Mission 001 has completed all of:
+
+1. planning
+2. implementation
+3. deterministic verification
+4. independent review/audit
+5. remediation of valid in-scope findings
+6. affected verification reruns
+7. final acceptance
+8. completion report
+
+the mission must create `docs/MISSION_002.md`, provided the evidence
+supports proceeding.
+
+GENERATE Mission 002: allowed and expected.
+EXECUTE Mission 002 from Mission 001: forbidden.
+
+Mission 002 has an intended product direction: official Kroger API
+integration (section 22). However, Mission 002 must NOT blindly assume that
+direction is immediately viable. Before defining Mission 002, reconcile:
+
+- Mission 001 technical debt
+- unresolved defects
+- architectural findings
+- test gaps
+- consumer workflow problems
+- data model limitations
+- provider abstraction maturity
+- external API prerequisites
+- legitimate Kroger API availability and access requirements
+
+If unresolved P0/P1 work from Mission 001 would make external retailer
+integration unsafe or structurally unsound, Mission 002 must first address
+those blockers. Otherwise Mission 002 should proceed toward the documented
+Kroger integration.
+
+Do not fabricate retailer access or credentials.
+
+`docs/MISSION_002.md` must contain all required successor-mission fields
+listed in `docs/MISSION_FRAMEWORK.md` section 2, including predecessor,
+campaign ID `2026-09-27-continuous-improvement`, inherited product state,
+unresolved findings, and its own successor-generation contract.
+
+Findings use structured IDs `GO-*` and the severity classification in
+`docs/MISSION_FRAMEWORK.md` section 3. Canonical mission state is recorded
+in `.product/mission_state.json` per section 4 of that document.
+
+### Execution Boundary
+
+- Do not recursively call `howl orchestrate`.
+- Do not recursively call `howl factory`.
+- Generate the next mission specification, then return control to the
+  outer Factory.

@@ -21,6 +21,14 @@ No application functionality exists yet.
 ## Specification
 
 - [Mission 001: First Consumer Vertical Slice](docs/MISSION_001.md)
+- [Mission Framework](docs/MISSION_FRAMEWORK.md) — how missions chain
+  together under the outer Howl Factory campaign
+
+## Development Process
+
+Development is organized as version-controlled missions executed and
+maintained through the Howl ecosystem. Grocery Optimizer remains an
+independent consumer application and is not part of Howl.
 
 ## Relationship to Howl
 
