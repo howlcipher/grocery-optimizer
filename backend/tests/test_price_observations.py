@@ -138,7 +138,7 @@ def test_duplicate_and_correction_handling(client):
     today_str = date.today().isoformat()
     store_name = "ALDI - Rochester Hills"
 
-    # Initial submission
+    # Initial submission by contributor receives edit token
     res1 = client.post(
         "/api/price-observations",
         json={
@@ -151,10 +151,13 @@ def test_duplicate_and_correction_handling(client):
     )
     assert res1.status_code == 201
     id1 = res1.json()["id"]
+    token1 = res1.json()["edit_token"]
+    assert token1 is not None
 
-    # Duplicate submission for same product, store, and date -> updates/corrects existing record
+    # Resubmission by SAME contributor supplying matching edit token -> updates existing record
     res2 = client.post(
         "/api/price-observations",
+        headers={"X-Edit-Token": token1},
         json={
             "product_id": "prod-eggs-dozen",
             "store_name": store_name,
@@ -168,9 +171,17 @@ def test_duplicate_and_correction_handling(client):
     assert res2.json()["price_cents"] == 219
     assert res2.json()["notes"] == "Corrected price"
 
-    # Explicit PATCH to correct entry
+    # Unauthorized PATCH attempt without token -> rejected with 403 Forbidden
+    res_unauth = client.patch(
+        f"/api/price-observations/{id1}",
+        json={"price_cents": 199},
+    )
+    assert res_unauth.status_code == 403
+
+    # Authorized PATCH to correct entry with valid edit token
     res3 = client.patch(
         f"/api/price-observations/{id1}",
+        headers={"X-Edit-Token": token1},
         json={"price_cents": 199, "is_promotional": True},
     )
     assert res3.status_code == 200
@@ -245,13 +256,27 @@ def test_delete_price_observation(client):
     )
     assert res.status_code == 201
     obs_id = res.json()["id"]
+    token = res.json()["edit_token"]
+    assert token is not None
 
-    del_res = client.delete(f"/api/price-observations/{obs_id}")
+    # Unauthorized delete attempt -> rejected with 403 Forbidden
+    unauth_del = client.delete(f"/api/price-observations/{obs_id}")
+    assert unauth_del.status_code == 403
+
+    # Authorized delete with matching token -> succeeds with 200 OK
+    del_res = client.delete(
+        f"/api/price-observations/{obs_id}",
+        headers={"X-Edit-Token": token},
+    )
     assert del_res.status_code == 200
     assert del_res.json() == {"status": "deleted", "id": obs_id}
 
     # Verify not found now
-    patch_res = client.patch(f"/api/price-observations/{obs_id}", json={"price_cents": 349})
+    patch_res = client.patch(
+        f"/api/price-observations/{obs_id}",
+        headers={"X-Edit-Token": token},
+        json={"price_cents": 349},
+    )
     assert patch_res.status_code == 404
 
 

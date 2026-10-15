@@ -1,7 +1,12 @@
-import { SavedListMetadata } from "../types";
+import { SavedListMetadata, StoreResponse } from "../types";
 
 const SAVED_LISTS_KEY = "grocery_optimizer_saved_lists";
 const ACTIVE_LIST_ID_KEY = "grocery_optimizer_active_list_id";
+const OBSERVATION_TOKENS_KEY = "grocery_optimizer_observation_tokens";
+const RECENT_STORES_KEY = "grocery_optimizer_recent_stores";
+const SELECTED_ZIP_KEY = "grocery_optimizer_selected_zip";
+
+// --- Saved Lists Storage ---
 
 export function getSavedLists(): SavedListMetadata[] {
   try {
@@ -69,5 +74,113 @@ export function setActiveListId(id: string): void {
     localStorage.setItem(ACTIVE_LIST_ID_KEY, id);
   } catch (e) {
     console.error("Failed to set active list ID:", e);
+  }
+}
+
+// --- Capability Observation Edit Tokens ---
+
+export function getObservationTokens(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(OBSERVATION_TOKENS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function getObservationToken(observationId: string): string | null {
+  const tokens = getObservationTokens();
+  return tokens[observationId] || null;
+}
+
+export function saveObservationToken(observationId: string, token: string): void {
+  try {
+    const tokens = getObservationTokens();
+    tokens[observationId] = token;
+    localStorage.setItem(OBSERVATION_TOKENS_KEY, JSON.stringify(tokens));
+  } catch (e) {
+    console.error("Failed to save observation edit token:", e);
+  }
+}
+
+export function removeObservationToken(observationId: string): void {
+  try {
+    const tokens = getObservationTokens();
+    delete tokens[observationId];
+    localStorage.setItem(OBSERVATION_TOKENS_KEY, JSON.stringify(tokens));
+  } catch (e) {
+    console.error("Failed to remove observation edit token:", e);
+  }
+}
+
+export function hasObservationToken(observationId: string): boolean {
+  return Boolean(getObservationToken(observationId));
+}
+
+// --- Recent Stores Storage ---
+
+export function getRecentStores(): StoreResponse[] {
+  try {
+    const raw = localStorage.getItem(RECENT_STORES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveRecentStore(store: Partial<StoreResponse> & { name: string }): void {
+  try {
+    const recents = getRecentStores();
+    const cleanName = store.name.trim();
+    const cleanZip = store.zip_code?.trim() || null;
+
+    // Filter out duplicate if same name and zip
+    const filtered = recents.filter(
+      (s) => !(s.name.toLowerCase() === cleanName.toLowerCase() && (s.zip_code || null) === cleanZip)
+    );
+
+    const storeEntry: StoreResponse = {
+      id: store.id || `store-recent-${Date.now()}`,
+      retailer_name: store.retailer_name || store.name,
+      name: cleanName,
+      sort_order: store.sort_order || 100,
+      address: store.address || null,
+      city: store.city || null,
+      state: store.state || null,
+      zip_code: cleanZip,
+      is_unresolved_location: store.is_unresolved_location ?? (!cleanZip),
+    };
+
+    filtered.unshift(storeEntry);
+    // Keep top 6 recent stores
+    localStorage.setItem(RECENT_STORES_KEY, JSON.stringify(filtered.slice(0, 6)));
+  } catch (e) {
+    console.error("Failed to save recent store:", e);
+  }
+}
+
+// --- Geographic ZIP Preference ---
+
+export function getSelectedZipCode(): string | null {
+  try {
+    return localStorage.getItem(SELECTED_ZIP_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setSelectedZipCode(zip: string | null): void {
+  try {
+    if (zip && zip.trim()) {
+      localStorage.setItem(SELECTED_ZIP_KEY, zip.trim());
+    } else {
+      localStorage.removeItem(SELECTED_ZIP_KEY);
+    }
+  } catch (e) {
+    console.error("Failed to set selected ZIP:", e);
   }
 }

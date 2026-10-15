@@ -1,11 +1,15 @@
+import hashlib
+import secrets
 import uuid
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.schemas import (
+    BatchPriceObservationCreateRequest,
+    BatchPriceObservationResponse,
     ComparisonResponse,
     GroceryItemAddRequest,
     GroceryItemUpdateRequest,
@@ -296,37 +300,152 @@ def remove_item_from_list(
     return GroceryListResponse.model_validate(updated_list)
 
 
-def _resolve_or_create_store(db: Session, store_name: str) -> StoreModel:
-    cleaned_name = store_name.strip()
-    slug = cleaned_name.lower().replace(" ", "-").replace("'", "")
+def _generate_edit_token() -> tuple[str, str]:
+    """Generate a secure raw edit token and its SHA-256 hash."""
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    return raw_token, token_hash
+
+
+def _verify_edit_token(raw_token: str | None, token_hash: str | None) -> bool:
+    """Verify that a raw token matches the stored token hash."""
+    if not raw_token or not token_hash:
+        return False
+    computed = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    return secrets.compare_digest(computed, token_hash)
+
+
+def _infer_retailer_brand(store_name: str) -> str:
+    """Infer standardized retailer brand name from store description."""
+    s_lower = store_name.lower()
+    known_brands = [
+        ("meijer", "Meijer"),
+        ("kroger", "Kroger"),
+        ("aldi", "ALDI"),
+        ("trader joe", "Trader Joe's"),
+        ("whole foods", "Whole Foods Market"),
+        ("costco", "Costco"),
+        ("target", "Target"),
+        ("walmart", "Walmart"),
+        ("fresh thyme", "Fresh Thyme"),
+        ("fresh basket", "Fresh Basket"),
+        ("value foods", "Value Foods"),
+        ("busch's", "Busch's"),
+    ]
+    for key, brand in known_brands:
+        if key in s_lower:
+            return brand
+
+    if " - " in store_name:
+        return store_name.split(" - ")[0].strip()
+    if "," in store_name:
+        return store_name.split(",")[0].strip()
+    return store_name.strip()
+
+
+def _resolve_or_create_store(
+    db: Session,
+    store_name: str,
+    store_id: str | None = None,
+    retailer_name: str | None = None,
+    address: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    zip_code: str | None = None,
+) -> StoreModel:
+    """Resolve an existing physical store or create a new store with physical locality."""
+    # 1. Direct store_id lookup
+    if store_id:
+        store = db.query(StoreModel).filter(StoreModel.id == store_id).first()
+        if store:
+            return store
+
+    cleaned_store_name = store_name.strip()
+    cleaned_zip = zip_code.strip() if zip_code and zip_code.strip() else None
+    cleaned_city = city.strip() if city and city.strip() else None
+    cleaned_state = state.strip().upper() if state and state.strip() else None
+    cleaned_address = address.strip() if address and address.strip() else None
+
+    # Determine retailer brand
+    inferred_brand = (
+        retailer_name.strip()
+        if retailer_name and retailer_name.strip()
+        else _infer_retailer_brand(cleaned_store_name)
+    )
+    retailer_slug = inferred_brand.lower().replace(" ", "-").replace("'", "")
+
+    retailer = (
+        db.query(RetailerModel)
+        .filter(
+            (RetailerModel.slug == retailer_slug)
+            | (func.lower(RetailerModel.name) == inferred_brand.lower())
+        )
+        .first()
+    )
+    if not retailer:
+        retailer = RetailerModel(
+            id=f"ret-{retailer_slug}-{uuid.uuid4().hex[:4]}",
+            name=inferred_brand,
+            slug=retailer_slug,
+        )
+        db.add(retailer)
+        db.flush()
+
+    # 2. Location-aware matching if ZIP is present
+    if cleaned_zip:
+        query = db.query(StoreModel).filter(
+            StoreModel.retailer_id == retailer.id,
+            StoreModel.zip_code == cleaned_zip,
+            StoreModel.is_unresolved_location.is_(False),
+        )
+        if cleaned_address:
+            query = query.filter(func.lower(StoreModel.address) == cleaned_address.lower())
+        store = query.first()
+        if store:
+            return store
+
+        # Create distinct physical store for this locality
+        store_slug = f"{retailer_slug}-{cleaned_zip}-{uuid.uuid4().hex[:4]}"
+        store = StoreModel(
+            id=f"store-{store_slug}",
+            retailer_id=retailer.id,
+            name=cleaned_store_name,
+            slug=store_slug,
+            address=cleaned_address,
+            city=cleaned_city,
+            state=cleaned_state,
+            zip_code=cleaned_zip,
+            is_unresolved_location=False,
+            sort_order=100,
+        )
+        db.add(store)
+        db.flush()
+        return store
+
+    # 3. Unresolved fallback: Match existing unresolved store with exact name under this retailer
     store = (
         db.query(StoreModel)
-        .filter((func.lower(StoreModel.name) == cleaned_name.lower()) | (StoreModel.slug == slug))
+        .filter(
+            StoreModel.retailer_id == retailer.id,
+            func.lower(StoreModel.name) == cleaned_store_name.lower(),
+            StoreModel.is_unresolved_location.is_(True),
+        )
         .first()
     )
     if store:
         return store
 
-    # Create retailer if needed for user-observed stores
-    retailer = (
-        db.query(RetailerModel)
-        .filter(RetailerModel.slug == "user-observed-stores")
-        .first()
-    )
-    if not retailer:
-        retailer = RetailerModel(
-            id="ret-user-observed",
-            name="Community Observed Stores",
-            slug="user-observed-stores",
-        )
-        db.add(retailer)
-        db.flush()
-
+    store_slug = f"{retailer_slug}-unresolved-{uuid.uuid4().hex[:6]}"
     store = StoreModel(
-        id=f"store-{uuid.uuid4().hex[:8]}",
+        id=f"store-{store_slug}",
         retailer_id=retailer.id,
-        name=cleaned_name,
-        slug=f"{slug}-{uuid.uuid4().hex[:4]}",
+        name=cleaned_store_name,
+        slug=store_slug,
+        address=cleaned_address,
+        city=cleaned_city,
+        state=cleaned_state,
+        zip_code=None,
+        is_unresolved_location=True,
         sort_order=100,
     )
     db.add(store)
@@ -335,7 +454,10 @@ def _resolve_or_create_store(db: Session, store_name: str) -> StoreModel:
 
 
 def _to_observation_response(
-    obs: PriceObservationModel, product: ProductModel | None
+    obs: PriceObservationModel,
+    product: ProductModel | None,
+    store: StoreModel | None = None,
+    edit_token: str | None = None,
 ) -> PriceObservationResponse:
     today = date.today()
     obs_date = obs.observation_date
@@ -344,6 +466,12 @@ def _to_observation_response(
     cents = obs.price_cents
     formatted = f"${cents // 100}.{cents % 100:02d}"
 
+    resolved_store = store or getattr(obs, "store", None)
+    store_city = getattr(resolved_store, "city", None) if resolved_store else None
+    store_state = getattr(resolved_store, "state", None) if resolved_store else None
+    store_zip = getattr(resolved_store, "zip_code", None) if resolved_store else None
+    is_unresolved = getattr(resolved_store, "is_unresolved_location", False) if resolved_store else False
+
     return PriceObservationResponse(
         id=obs.id,
         product_id=obs.product_id,
@@ -351,6 +479,10 @@ def _to_observation_response(
         product_brand=product.brand if product else "Unknown Brand",
         store_id=obs.store_id,
         store_name=obs.store_name,
+        store_city=store_city,
+        store_state=store_state,
+        store_zip_code=store_zip,
+        is_unresolved_location=is_unresolved,
         price_cents=cents,
         formatted_price=formatted,
         observation_date=date_str,
@@ -359,9 +491,46 @@ def _to_observation_response(
         notes=obs.notes,
         source="user_contributed",
         source_attribution=f"User-entered observation ({date_str})",
+        edit_token=edit_token,
         created_at=obs.created_at,
         updated_at=obs.updated_at,
     )
+
+
+@router.get("/stores", response_model=list[StoreResponse], tags=["stores"])
+def get_stores(
+    zip_code: str | None = Query(default=None, description="Filter stores by ZIP code"),
+    q: str | None = Query(default=None, description="Search by store name, retailer, or city"),
+    limit: int = Query(default=50, ge=1, le=100, description="Max stores to return"),
+    db: Session = Depends(get_db),
+):
+    """Retrieve physical grocery stores with locality metadata."""
+    query = db.query(StoreModel).options(joinedload(StoreModel.retailer))
+    if zip_code and zip_code.strip():
+        query = query.filter(StoreModel.zip_code == zip_code.strip())
+    if q and q.strip():
+        term = f"%{q.strip().lower()}%"
+        query = query.filter(
+            (func.lower(StoreModel.name).like(term))
+            | (func.lower(StoreModel.city).like(term))
+            | (func.lower(StoreModel.address).like(term))
+        )
+
+    stores = query.order_by(StoreModel.sort_order.asc(), StoreModel.name.asc()).limit(limit).all()
+    return [
+        StoreResponse(
+            id=s.id,
+            retailer_name=s.retailer.name if s.retailer else s.name,
+            name=s.name,
+            sort_order=s.sort_order,
+            address=s.address,
+            city=s.city,
+            state=s.state,
+            zip_code=s.zip_code,
+            is_unresolved_location=s.is_unresolved_location,
+        )
+        for s in stores
+    ]
 
 
 @router.post(
@@ -375,6 +544,10 @@ def compare_prices_for_list(
         default="demonstration",
         description="Pricing source: 'demonstration' (seeded mock) or 'user_contributed' (consumer observations)",
     ),
+    zip_code: str | None = Query(
+        default=None,
+        description="Optional ZIP code to restrict store comparisons to local physical stores (e.g. 48042)",
+    ),
     db: Session = Depends(get_db),
     provider: RetailerProvider = Depends(get_retailer_provider),
 ):
@@ -382,6 +555,7 @@ def compare_prices_for_list(
 
     Guarantees strict separation between demonstration sample data and user observations.
     Never mixes incompatible sources into a claimed savings figure.
+    Supports physical store geographic filtering by ZIP code.
     """
     grocery_list = (
         db.query(GroceryListModel)
@@ -403,14 +577,20 @@ def compare_prices_for_list(
 
     # Determine provider based on requested source
     if source == "user_contributed":
-        active_provider: RetailerProvider = UserContributedRetailerProvider(db=db)
+        active_provider: RetailerProvider = UserContributedRetailerProvider(db=db, zip_code=zip_code)
         is_demo = False
         pricing_source = "user_contributed"
         pricing_label = "User-Entered Observations"
-        notice = (
-            "Prices are consumer-entered observations. Missing observation data does not mean "
-            "stores lack this item. We never mix demonstration data with real observations."
-        )
+        if zip_code:
+            notice = (
+                f"Prices are consumer-entered observations filtered to ZIP {zip_code}. "
+                "Only physical stores located in this area are included."
+            )
+        else:
+            notice = (
+                "Prices are consumer-entered observations. Missing observation data does not mean "
+                "stores lack this item. We never mix demonstration data with real observations."
+            )
     else:
         active_provider = provider
         is_demo = True
@@ -467,6 +647,11 @@ def compare_prices_for_list(
                 retailer_name=store_retailer_name_map.get(s.id, s.name),
                 name=s.name,
                 sort_order=s.sort_order,
+                address=getattr(s, "address", None),
+                city=getattr(s, "city", None),
+                state=getattr(s, "state", None),
+                zip_code=getattr(s, "zip_code", None),
+                is_unresolved_location=getattr(s, "is_unresolved_location", False),
             )
             for s in plan.stores
         ]
@@ -513,6 +698,7 @@ def compare_prices_for_list(
         pricing_source_label=pricing_label,
         is_demonstration=is_demo,
         data_notice=notice,
+        zip_code=zip_code,
     )
 
 
@@ -527,13 +713,17 @@ def compare_prices_for_list(
 def get_price_observations(
     product_id: str | None = Query(default=None, description="Filter by product ID"),
     store_id: str | None = Query(default=None, description="Filter by store ID"),
+    zip_code: str | None = Query(default=None, description="Filter by store ZIP code"),
     limit: int = Query(default=50, ge=1, le=100, description="Max observations to return"),
     db: Session = Depends(get_db),
 ):
-    """Retrieve recent user price observations."""
+    """Retrieve community price observations. Public feeds strictly exclude edit tokens."""
     query = (
         db.query(PriceObservationModel)
-        .options(joinedload(PriceObservationModel.product))
+        .options(
+            joinedload(PriceObservationModel.product),
+            joinedload(PriceObservationModel.store),
+        )
         .order_by(
             PriceObservationModel.observation_date.desc(),
             PriceObservationModel.created_at.desc(),
@@ -543,9 +733,15 @@ def get_price_observations(
         query = query.filter(PriceObservationModel.product_id == product_id)
     if store_id:
         query = query.filter(PriceObservationModel.store_id == store_id)
+    if zip_code and zip_code.strip():
+        query = query.join(PriceObservationModel.store).filter(
+            StoreModel.zip_code == zip_code.strip(),
+            StoreModel.is_unresolved_location.is_(False),
+        )
 
     models = query.limit(limit).all()
-    return [_to_observation_response(obs, obs.product) for obs in models]
+    # Edit token is intentionally omitted (None) on public read calls
+    return [_to_observation_response(obs, obs.product, obs.store, edit_token=None) for obs in models]
 
 
 @router.post(
@@ -556,9 +752,10 @@ def get_price_observations(
 )
 def create_price_observation(
     body: PriceObservationCreateRequest,
+    x_edit_token: str | None = Header(default=None, alias="X-Edit-Token"),
     db: Session = Depends(get_db),
 ):
-    """Record a consumer-observed grocery store price."""
+    """Record a consumer-observed grocery store price with capability-based edit authorization."""
     # Validate canonical product
     product = db.query(ProductModel).filter(ProductModel.id == body.product_id).first()
     if not product:
@@ -595,29 +792,45 @@ def create_price_observation(
             detail="Observation date cannot be older than one year.",
         )
 
-    # Resolve or create store
-    store = _resolve_or_create_store(db, body.store_name)
-
-    # Duplicate / correction check: if same product, store, date, and contributor, update
-    existing = (
-        db.query(PriceObservationModel)
-        .filter(
-            PriceObservationModel.product_id == body.product_id,
-            PriceObservationModel.store_id == store.id,
-            PriceObservationModel.observation_date == obs_date,
-        )
-        .first()
+    # Resolve or create physical store
+    store = _resolve_or_create_store(
+        db=db,
+        store_name=body.store_name,
+        store_id=body.store_id,
+        retailer_name=body.retailer_name,
+        address=body.address,
+        city=body.city,
+        state=body.state,
+        zip_code=body.zip_code,
     )
 
-    if existing:
-        existing.price_cents = body.price_cents
-        existing.is_promotional = body.is_promotional
-        existing.notes = body.notes
-        existing.updated_at = datetime.now(UTC)
-        db.commit()
-        db.refresh(existing)
-        return _to_observation_response(existing, product)
+    # Duplicate / correction check:
+    # If incoming request presents an edit token, check if this contributor already has an observation
+    # for this product, store, and date. If so, update their own observation.
+    # If no matching token or different contributor, record a new distinct observation.
+    if x_edit_token:
+        incoming_hash = hashlib.sha256(x_edit_token.encode("utf-8")).hexdigest()
+        existing = (
+            db.query(PriceObservationModel)
+            .filter(
+                PriceObservationModel.product_id == body.product_id,
+                PriceObservationModel.store_id == store.id,
+                PriceObservationModel.observation_date == obs_date,
+                PriceObservationModel.edit_token_hash == incoming_hash,
+            )
+            .first()
+        )
+        if existing:
+            existing.price_cents = body.price_cents
+            existing.is_promotional = body.is_promotional
+            existing.notes = body.notes
+            existing.updated_at = datetime.now(UTC)
+            db.commit()
+            db.refresh(existing)
+            return _to_observation_response(existing, product, store, edit_token=x_edit_token)
 
+    # Create new observation with cryptographically secure edit token
+    raw_token, token_hash = _generate_edit_token()
     new_obs = PriceObservationModel(
         id=str(uuid.uuid4()),
         product_id=body.product_id,
@@ -628,11 +841,103 @@ def create_price_observation(
         is_promotional=body.is_promotional,
         notes=body.notes,
         contributor_id=body.contributor_id,
+        edit_token_hash=token_hash,
     )
     db.add(new_obs)
     db.commit()
     db.refresh(new_obs)
-    return _to_observation_response(new_obs, product)
+    return _to_observation_response(new_obs, product, store, edit_token=raw_token)
+
+
+@router.post(
+    "/price-observations/batch",
+    response_model=BatchPriceObservationResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["observations"],
+)
+def create_batch_price_observations(
+    body: BatchPriceObservationCreateRequest,
+    x_edit_token: str | None = Header(default=None, alias="X-Edit-Token"),
+    db: Session = Depends(get_db),
+):
+    """Rapidly record multiple product prices observed during a single shopping trip."""
+    # Validate observation date
+    try:
+        obs_date = datetime.strptime(body.observation_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid observation date format. Please use YYYY-MM-DD.",
+        )
+
+    today = date.today()
+    if obs_date > today:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Observation date cannot be in the future.",
+        )
+    if (today - obs_date).days > 365:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Observation date cannot be older than one year.",
+        )
+
+    store = _resolve_or_create_store(
+        db=db,
+        store_name=body.store_name,
+        store_id=body.store_id,
+        retailer_name=body.retailer_name,
+        address=body.address,
+        city=body.city,
+        state=body.state,
+        zip_code=body.zip_code,
+    )
+
+    created_obs_responses: list[PriceObservationResponse] = []
+    for item in body.items:
+        product = db.query(ProductModel).filter(ProductModel.id == item.product_id).first()
+        if not product:
+            continue
+
+        if item.price_cents <= 0 or item.price_cents > 50000:
+            continue
+
+        raw_token, token_hash = _generate_edit_token()
+        new_obs = PriceObservationModel(
+            id=str(uuid.uuid4()),
+            product_id=item.product_id,
+            store_id=store.id,
+            store_name=store.name,
+            price_cents=item.price_cents,
+            observation_date=obs_date,
+            is_promotional=item.is_promotional,
+            notes=item.notes,
+            edit_token_hash=token_hash,
+        )
+        db.add(new_obs)
+        db.flush()
+        created_obs_responses.append(
+            _to_observation_response(new_obs, product, store, edit_token=raw_token)
+        )
+
+    db.commit()
+    retailer = store.retailer if store.retailer else db.query(RetailerModel).filter_by(id=store.retailer_id).first()
+    store_resp = StoreResponse(
+        id=store.id,
+        retailer_name=retailer.name if retailer else store.name,
+        name=store.name,
+        sort_order=store.sort_order,
+        address=store.address,
+        city=store.city,
+        state=store.state,
+        zip_code=store.zip_code,
+        is_unresolved_location=store.is_unresolved_location,
+    )
+    return BatchPriceObservationResponse(
+        observations=created_obs_responses,
+        store=store_resp,
+        created_count=len(created_obs_responses),
+    )
 
 
 @router.patch(
@@ -643,12 +948,16 @@ def create_price_observation(
 def update_price_observation(
     observation_id: str,
     body: PriceObservationUpdateRequest,
+    x_edit_token: str | None = Header(default=None, alias="X-Edit-Token"),
     db: Session = Depends(get_db),
 ):
-    """Correct or update an existing price observation."""
+    """Correct an existing price observation. Requires capability edit token."""
     obs = (
         db.query(PriceObservationModel)
-        .options(joinedload(PriceObservationModel.product))
+        .options(
+            joinedload(PriceObservationModel.product),
+            joinedload(PriceObservationModel.store),
+        )
         .filter(PriceObservationModel.id == observation_id)
         .first()
     )
@@ -656,6 +965,13 @@ def update_price_observation(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Price observation not found",
+        )
+
+    # Capability-based authorization check
+    if not obs.edit_token_hash or not _verify_edit_token(x_edit_token, obs.edit_token_hash):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing edit token. You can only modify observations you recorded.",
         )
 
     if body.price_cents is not None:
@@ -688,7 +1004,7 @@ def update_price_observation(
         obs.observation_date = obs_date
 
     if body.store_name is not None and body.store_name.strip():
-        store = _resolve_or_create_store(db, body.store_name)
+        store = _resolve_or_create_store(db=db, store_name=body.store_name)
         obs.store_id = store.id
         obs.store_name = store.name
 
@@ -701,7 +1017,7 @@ def update_price_observation(
     obs.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(obs)
-    return _to_observation_response(obs, obs.product)
+    return _to_observation_response(obs, obs.product, obs.store, edit_token=x_edit_token)
 
 
 @router.delete(
@@ -710,9 +1026,10 @@ def update_price_observation(
 )
 def delete_price_observation(
     observation_id: str,
+    x_edit_token: str | None = Header(default=None, alias="X-Edit-Token"),
     db: Session = Depends(get_db),
 ):
-    """Delete an erroneous price observation."""
+    """Delete an erroneous price observation. Requires capability edit token."""
     obs = (
         db.query(PriceObservationModel)
         .filter(PriceObservationModel.id == observation_id)
@@ -722,6 +1039,13 @@ def delete_price_observation(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Price observation not found",
+        )
+
+    # Capability-based authorization check
+    if not obs.edit_token_hash or not _verify_edit_token(x_edit_token, obs.edit_token_hash):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing edit token. You can only delete observations you recorded.",
         )
 
     db.delete(obs)
@@ -736,9 +1060,10 @@ def delete_price_observation(
 )
 def compare_product_store_prices(
     product_id: str,
+    zip_code: str | None = Query(default=None, description="Optional ZIP code filter"),
     db: Session = Depends(get_db),
 ):
-    """Compare observed prices for a specific canonical product across all stores."""
+    """Compare observed prices for a specific canonical product across physical stores."""
     product = db.query(ProductModel).filter(ProductModel.id == product_id).first()
     if not product:
         raise HTTPException(
@@ -746,15 +1071,22 @@ def compare_product_store_prices(
             detail="Product not found in canonical catalog",
         )
 
-    raw_observations = (
+    query = (
         db.query(PriceObservationModel)
+        .options(joinedload(PriceObservationModel.store))
         .filter(PriceObservationModel.product_id == product_id)
-        .order_by(
-            PriceObservationModel.observation_date.desc(),
-            PriceObservationModel.updated_at.desc(),
-        )
-        .all()
     )
+
+    if zip_code and zip_code.strip():
+        query = query.join(PriceObservationModel.store).filter(
+            StoreModel.zip_code == zip_code.strip(),
+            StoreModel.is_unresolved_location.is_(False),
+        )
+
+    raw_observations = query.order_by(
+        PriceObservationModel.observation_date.desc(),
+        PriceObservationModel.updated_at.desc(),
+    ).all()
 
     # De-duplicate to newest observation per store
     latest_per_store: dict[str, PriceObservationModel] = {}
@@ -769,7 +1101,8 @@ def compare_product_store_prices(
         key=lambda o: (o.price_cents, o.observation_date),
     )
 
-    obs_responses = [_to_observation_response(obs, product) for obs in sorted_observations]
+    # Public response strictly omits edit tokens
+    obs_responses = [_to_observation_response(obs, product, obs.store, edit_token=None) for obs in sorted_observations]
     unique_stores = {obs.store_name for obs in sorted_observations}
     cheapest = obs_responses[0] if obs_responses else None
 

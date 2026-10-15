@@ -40,6 +40,11 @@ class StoreModel(Base):
     name = Column(String(255), nullable=False)
     slug = Column(String(128), nullable=False, unique=True)
     sort_order = Column(Integer, nullable=False, default=0)
+    address = Column(String(255), nullable=True)
+    city = Column(String(128), nullable=True)
+    state = Column(String(32), nullable=True)
+    zip_code = Column(String(20), nullable=True, index=True)
+    is_unresolved_location = Column(Boolean, nullable=False, default=False)
 
     retailer = relationship("RetailerModel", back_populates="stores")
     offers = relationship("ProductOfferModel", back_populates="store", cascade="all, delete-orphan")
@@ -121,6 +126,7 @@ class PriceObservationModel(Base):
     is_promotional = Column(Boolean, nullable=False, default=False)
     notes = Column(String(500), nullable=True)
     contributor_id = Column(String(64), nullable=True, index=True)
+    edit_token_hash = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 

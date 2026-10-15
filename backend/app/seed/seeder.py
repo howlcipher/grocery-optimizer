@@ -33,12 +33,22 @@ def seed_database(db: Session) -> None:
                     name=store.name,
                     slug=store.slug,
                     sort_order=store.sort_order,
+                    address=getattr(store, "address", None),
+                    city=getattr(store, "city", None),
+                    state=getattr(store, "state", None),
+                    zip_code=getattr(store, "zip_code", None),
+                    is_unresolved_location=getattr(store, "is_unresolved_location", False),
                 )
             )
         else:
             existing_store.name = store.name
             existing_store.slug = store.slug
             existing_store.sort_order = store.sort_order
+            existing_store.address = getattr(store, "address", None)
+            existing_store.city = getattr(store, "city", None)
+            existing_store.state = getattr(store, "state", None)
+            existing_store.zip_code = getattr(store, "zip_code", None)
+            existing_store.is_unresolved_location = getattr(store, "is_unresolved_location", False)
 
     # Seed Products
     for prod in SEED_PRODUCTS:

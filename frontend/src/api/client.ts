@@ -1,8 +1,19 @@
 import {
+  BatchPriceObservationRequest,
+  BatchPriceObservationResponse,
   ComparisonResponse,
   GroceryList,
+  PriceObservation,
   Product,
+  ProductPricesComparisonResponse,
+  StoreResponse,
 } from "../types";
+import {
+  getObservationToken,
+  removeObservationToken,
+  saveObservationToken,
+  saveRecentStore,
+} from "../lib/storage";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
@@ -81,38 +92,100 @@ export const api = {
 
   async comparePrices(
     listId: string,
-    source: "demonstration" | "user_contributed" = "demonstration"
+    source: "demonstration" | "user_contributed" = "demonstration",
+    zipCode?: string | null
   ): Promise<ComparisonResponse> {
     const params = new URLSearchParams({ source });
+    if (zipCode && zipCode.trim()) {
+      params.set("zip_code", zipCode.trim());
+    }
     return request<ComparisonResponse>(`/lists/${listId}/compare?${params.toString()}`, {
       method: "POST",
     });
   },
 
+  async getStores(zipCode?: string, q?: string, limit = 50): Promise<StoreResponse[]> {
+    const params = new URLSearchParams();
+    if (zipCode && zipCode.trim()) params.set("zip_code", zipCode.trim());
+    if (q && q.trim()) params.set("q", q.trim());
+    params.set("limit", String(limit));
+    return request<StoreResponse[]>(`/stores?${params.toString()}`);
+  },
+
   async getPriceObservations(
     productId?: string,
     storeId?: string,
+    zipCode?: string,
     limit = 50
-  ): Promise<import("../types").PriceObservation[]> {
+  ): Promise<PriceObservation[]> {
     const params = new URLSearchParams();
     if (productId) params.set("product_id", productId);
     if (storeId) params.set("store_id", storeId);
+    if (zipCode) params.set("zip_code", zipCode);
     params.set("limit", String(limit));
-    return request<import("../types").PriceObservation[]>(`/price-observations?${params.toString()}`);
+    return request<PriceObservation[]>(`/price-observations?${params.toString()}`);
   },
 
   async createPriceObservation(data: {
     product_id: string;
     store_name: string;
+    store_id?: string | null;
+    retailer_name?: string | null;
+    address?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip_code?: string | null;
     price_cents: number;
     observation_date: string;
     is_promotional?: boolean;
     notes?: string | null;
-  }): Promise<import("../types").PriceObservation> {
-    return request<import("../types").PriceObservation>("/price-observations", {
+  }): Promise<PriceObservation> {
+    const created = await request<PriceObservation>("/price-observations", {
       method: "POST",
       body: JSON.stringify(data),
     });
+
+    // Save capability token to localStorage
+    if (created.edit_token) {
+      saveObservationToken(created.id, created.edit_token);
+    }
+
+    // Save recent store
+    saveRecentStore({
+      id: created.store_id || undefined,
+      retailer_name: data.retailer_name || undefined,
+      name: created.store_name,
+      address: data.address,
+      city: created.store_city || data.city,
+      state: created.store_state || data.state,
+      zip_code: created.store_zip_code || data.zip_code,
+      is_unresolved_location: created.is_unresolved_location,
+    });
+
+    return created;
+  },
+
+  async createBatchPriceObservations(
+    data: BatchPriceObservationRequest
+  ): Promise<BatchPriceObservationResponse> {
+    const res = await request<BatchPriceObservationResponse>("/price-observations/batch", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+
+    // Save capability tokens for each observation
+    for (const obs of res.observations) {
+      if (obs.edit_token) {
+        saveObservationToken(obs.id, obs.edit_token);
+      }
+    }
+
+    // Save recent store
+    if (res.store) {
+      saveRecentStore(res.store);
+    }
+
+    return res;
   },
 
   async updatePriceObservation(
@@ -123,24 +196,53 @@ export const api = {
       observation_date?: string;
       is_promotional?: boolean;
       notes?: string | null;
+    },
+    explicitToken?: string | null
+  ): Promise<PriceObservation> {
+    const token = explicitToken || getObservationToken(observationId);
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["X-Edit-Token"] = token;
     }
-  ): Promise<import("../types").PriceObservation> {
-    return request<import("../types").PriceObservation>(`/price-observations/${observationId}`, {
+
+    return request<PriceObservation>(`/price-observations/${observationId}`, {
       method: "PATCH",
+      headers,
       body: JSON.stringify(data),
     });
   },
 
-  async deletePriceObservation(observationId: string): Promise<{ status: string; id: string }> {
-    return request<{ status: string; id: string }>(`/price-observations/${observationId}`, {
-      method: "DELETE",
-    });
+  async deletePriceObservation(
+    observationId: string,
+    explicitToken?: string | null
+  ): Promise<{ status: string; id: string }> {
+    const token = explicitToken || getObservationToken(observationId);
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["X-Edit-Token"] = token;
+    }
+
+    const res = await request<{ status: string; id: string }>(
+      `/price-observations/${observationId}`,
+      {
+        method: "DELETE",
+        headers,
+      }
+    );
+
+    removeObservationToken(observationId);
+    return res;
   },
 
   async compareProductStorePrices(
-    productId: string
-  ): Promise<import("../types").ProductPricesComparisonResponse> {
-    return request<import("../types").ProductPricesComparisonResponse>(`/products/${productId}/prices`);
+    productId: string,
+    zipCode?: string | null
+  ): Promise<ProductPricesComparisonResponse> {
+    const params = new URLSearchParams();
+    if (zipCode && zipCode.trim()) {
+      params.set("zip_code", zipCode.trim());
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request<ProductPricesComparisonResponse>(`/products/${productId}/prices${query}`);
   },
 };
-

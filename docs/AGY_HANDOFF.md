@@ -239,3 +239,66 @@ Access UI at `http://localhost:5173`.
 - `GO-004` (P3): Exhaustive store enumeration complexity grows with $O(N^2)$; acceptable for small store networks, requires candidate pruning for large retailer networks.
 - `GO-006` (P3): Open Prices dataset currently lacks geographic density in suburban US regions (0 cross-store product overlap in SE Michigan); Path B (User-Contributed Pricing) provides the bridge until community density matures.
 
+---
+
+## 9. Mission 003: Trusted Prices & Local Store Intelligence
+
+- **Active Agent**: AGY
+- **Model**: Gemini 3.8 Flash (High)
+- **Mission**: Mission 003 — Trusted Prices & Local Store Intelligence
+- **Campaign**: `2026-09-27-continuous-improvement`
+- **Branch**: `agy/mission-003`
+- **Base Commit**: `6b9a0b0`
+- **Status**: MISSION 003 COMPLETE AND VERIFIED
+
+### 9.1 Delivered Capabilities
+
+1. **Capability-Based Authorization (Finding A / `GO-007`, P0)**:
+   - Unguessable capability edit token (`secrets.token_urlsafe(32)`) generated upon creation of price observations.
+   - SHA-256 hash stored in `price_observations.edit_token_hash`. Raw token is never stored in DB and strictly redacted from public GET endpoints.
+   - Enforced via `X-Edit-Token` HTTP header on `PATCH /api/price-observations/{id}` and `DELETE /api/price-observations/{id}`. Missing or mismatching token returns HTTP 403 Forbidden.
+   - Cross-contributor overwrite prevention: POST duplicate matching requires identical token; distinct contributors receive separate observation records.
+   - Browser client retains tokens in `localStorage` (`grocery_optimizer_observation_tokens`), enabling transparent ownership verification and edit/delete capabilities for contributors without mandatory user accounts.
+
+2. **Physical Store Identity & Locality (Phase 2 / `GO-008`, P2)**:
+   - Relational schema migration `cc75f3ae8281_add_store_locality_and_observation_.py` adding `address`, `city`, `state`, `zip_code`, and `is_unresolved_location` to `stores`.
+   - Separate retailer brand normalization (`_infer_retailer_brand`) and physical locality separation (`_resolve_or_create_store`).
+   - Physical stores sharing brand names across different ZIP codes are strictly segregated (no silent merging).
+   - Historical mock stores preserved; unverified store locations marked `is_unresolved_location=True` and excluded from localized comparisons.
+   - Pilot geographic focus centered on ZIP 48042 (Lenox Township / New Haven, MI).
+
+3. **Data Quality, Conflict Resolution & Freshness (Finding B, P2)**:
+   - Observations on the same date preserve temporary promotional pricing distinctly from regular pricing.
+   - Conflicting regular observations on the same date resolve to a robust median consensus price.
+   - Observations >30 days tagged `is_stale=True` with explicit UI callouts.
+
+4. **Rapid Shopping Trip Batch Entry (Phase 4 / `GO-009`, P2)**:
+   - `POST /api/price-observations/batch` endpoint supporting atomic recording of multi-item shopping trips.
+   - Friction reduced by >55% (~13 actions for 5 items vs ~30 manual entries previously).
+   - Recent store caching (`grocery_optimizer_recent_stores`) and regional pilot chips.
+
+5. **Receipt Scanning Feasibility (Phase 5)**:
+   - Comprehensive study in `docs/RECEIPT_SCANNING_FEASIBILITY.md` evaluating in-browser WebAssembly (Tesseract.js) vs local server OCR vs cloud APIs.
+   - Detailed PII protection protocols (card PAN, authorization, and loyalty redaction) and human-in-the-loop staging architecture.
+   - Actionable roadmap for Mission 004.
+
+6. **Preservation of Prior Work (Phase 6)**:
+   - Open Prices client, normalizer, and provider preserved with zero regressions.
+   - Strict segregation: synthetic demonstration data and real crowd-sourced observations are never mixed into a single savings calculation.
+
+### 9.2 Verification Evidence & Test Statistics
+
+| Suite / Gate | Tool / Runner | Result | Notes |
+| :--- | :--- | :--- | :--- |
+| Backend Tests | `pytest` | **49 passed** (2.01s) | 38 baseline + 4 security & ownership + 7 store locality/batch/conflict tests |
+| Backend Lint | `ruff check` | **0 errors** (Clean) | All backend files clean |
+| Backend Types | `mypy` | **0 errors** | Domain, catalog, and optimizer modules clean |
+| Frontend Tests | `vitest` | **15 passed** (4 test files) | 10 Mission 001 + 5 Mission 003 tests |
+| Frontend Types | `tsc --noEmit` | **0 errors** | Strict typing clean |
+| Frontend Lint | `eslint` | **0 errors, 0 warnings** | Clean |
+| Production Build | `vite build` | **Built in 1.55s** | Clean dist output |
+| Browser Desktop Suite | Playwright Chromium | **100% Pass** | Shopping trip batch modal, localized comparison (ZIP 48042) |
+| Browser Mobile Suite | Playwright Chromium | **100% Pass** | 375x812 viewport, shopping trip entry, touch targets |
+| Screenshots | Playwright | **4 captured** | Version-controlled in `docs/images/mission-003/` |
+
+
