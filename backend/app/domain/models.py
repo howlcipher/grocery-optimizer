@@ -1,4 +1,12 @@
 from dataclasses import dataclass, field
+from enum import Enum
+
+
+class PriceSource(str, Enum):
+    DEMONSTRATION = "demonstration"
+    USER_CONTRIBUTED = "user_contributed"
+    OPEN_PRICES = "open_prices"
+    LIVE_RETAILER = "live_retailer"
 
 
 @dataclass(frozen=True)
@@ -29,6 +37,32 @@ class Product:
 
 
 @dataclass(frozen=True)
+class PriceObservation:
+    id: str
+    product_id: str
+    store_id: str
+    store_name: str
+    price_cents: int
+    observation_date: str  # YYYY-MM-DD
+    is_promotional: bool = False
+    notes: str | None = None
+    contributor_id: str | None = None
+    source: PriceSource = PriceSource.USER_CONTRIBUTED
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @property
+    def is_stale(self) -> bool:
+        from datetime import date, datetime
+
+        try:
+            obs = datetime.strptime(self.observation_date, "%Y-%m-%d").date()
+            return (date.today() - obs).days > 30
+        except (ValueError, TypeError):
+            return False
+
+
+@dataclass(frozen=True)
 class ProductOffer:
     id: str
     retailer_id: str
@@ -38,6 +72,10 @@ class ProductOffer:
     regular_price_cents: int
     promotional_price_cents: int | None
     is_available: bool
+    source: PriceSource = PriceSource.DEMONSTRATION
+    observation_date: str | None = None
+    is_stale: bool = False
+    source_attribution: str = "Demonstration sample"
 
     @property
     def effective_price_cents(self) -> int:
@@ -92,6 +130,7 @@ class ShoppingPlan:
     items: list[ShoppingPlanItem]
     total_cents: int
     missing_product_ids: list[str] = field(default_factory=list)
+    source: PriceSource = PriceSource.DEMONSTRATION
 
 
 @dataclass(frozen=True)
@@ -100,3 +139,4 @@ class ComparisonResult:
     best_plan: ShoppingPlan
     savings_cents: int | None
     additional_stops: int
+    source: PriceSource = PriceSource.DEMONSTRATION

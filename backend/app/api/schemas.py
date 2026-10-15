@@ -88,3 +88,60 @@ class ComparisonResponse(BaseModel):
     best_plan: ShoppingPlanResponse
     savings_cents: int | None = None
     additional_stops: int = 0
+    pricing_source: str = "demonstration"
+    pricing_source_label: str = "Demonstration Prices (Sample Data)"
+    is_demonstration: bool = True
+    data_notice: str | None = None
+
+
+# Price Observation Schemas
+class PriceObservationCreateRequest(BaseModel):
+    product_id: str
+    store_name: str = Field(min_length=1, max_length=255)
+    price_cents: int = Field(ge=1, le=50000, description="Price in integer cents ($0.01 to $500.00)")
+    observation_date: str = Field(description="ISO observation date YYYY-MM-DD")
+    is_promotional: bool = False
+    notes: str | None = Field(default=None, max_length=500)
+    contributor_id: str | None = Field(default=None, max_length=64)
+
+
+class PriceObservationUpdateRequest(BaseModel):
+    store_name: str | None = Field(default=None, min_length=1, max_length=255)
+    price_cents: int | None = Field(default=None, ge=1, le=50000)
+    observation_date: str | None = None
+    is_promotional: bool | None = None
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class PriceObservationResponse(BaseModel):
+    id: str
+    product_id: str
+    product_name: str
+    product_brand: str
+    store_id: str | None = None
+    store_name: str
+    price_cents: int
+    formatted_price: str
+    observation_date: str
+    is_promotional: bool
+    is_stale: bool
+    notes: str | None = None
+    source: str = "user_contributed"
+    source_attribution: str = "User-entered observation"
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProductPricesComparisonResponse(BaseModel):
+    product: ProductResponse
+    observations: list[PriceObservationResponse] = Field(default_factory=list)
+    cheapest_observation: PriceObservationResponse | None = None
+    store_count: int = 0
+    source: str = "user_contributed"
+    disclaimer: str = (
+        "Prices are consumer-observed shelf prices for community comparison. "
+        "They are not live retailer feeds or store guarantees."
+    )
+
