@@ -1,9 +1,9 @@
 {
   "schema": "grocery_optimizer.mission_state/v1",
   "campaign_id": "2026-09-27-continuous-improvement",
-  "latest_completed_mission": "docs/MISSION_004.md",
-  "next_mission": "docs/MISSION_005.md",
-  "status": "IN_PROGRESS",
+  "latest_completed_mission": "docs/MISSION_005.md",
+  "next_mission": "docs/MISSION_006.md",
+  "status": "COMPLETE",
   "open_findings": {
     "GO-002": {
       "severity": "P3",
@@ -90,5 +90,5 @@
       "status": "RESOLVED"
     }
   },
-  "updated_at": "2026-10-15T21:30:00Z"
+  "updated_at": "2026-10-15T21:35:00Z"
 }
