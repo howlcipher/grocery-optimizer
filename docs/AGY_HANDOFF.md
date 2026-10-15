@@ -171,8 +171,7 @@ Access UI at `http://localhost:5173`.
 - **Mission**: Mission 002 — Real-World Pricing Foundation
 - **Campaign**: `2026-09-27-continuous-improvement`
 - **Branch**: `agy/mission-002`
-- **Baseline Commit**: `68898ba` (Mission 001 merged into `main`)
-- **Status**: IMPLEMENTATION COMPLETE & VERIFIED — READY FOR USER ACCEPTANCE
+- **Status**: MISSION 002 COMPLETE, ACCEPTED, AND MERGED (PR #2, commit `89ca8df`)
 
 ### 8.1 Empirical Coverage Study & Gate Decisions
 
