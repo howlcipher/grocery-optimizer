@@ -99,7 +99,7 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
               <button
                 type="button"
                 className="btn btn-secondary touch-target"
-                style={{ height: 36, padding: "0 12px", fontSize: "0.85rem" }}
+                style={{ minHeight: 44, padding: "0 14px", fontSize: "0.85rem" }}
                 onClick={() => onRecordPriceForProduct(product)}
               >
                 + Record Store Price
@@ -152,7 +152,7 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
                         <button
                           type="button"
                           className="link-button touch-target"
-                          style={{ height: 28, fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: 4 }}
+                          style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", padding: "4px 8px", marginTop: 4 }}
                           onClick={() => onRecordPriceForProduct(product, obs)}
                         >
                           Correct Entry

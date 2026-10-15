@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.schemas import (
@@ -300,7 +301,7 @@ def _resolve_or_create_store(db: Session, store_name: str) -> StoreModel:
     slug = cleaned_name.lower().replace(" ", "-").replace("'", "")
     store = (
         db.query(StoreModel)
-        .filter((StoreModel.name.ilike(cleaned_name)) | (StoreModel.slug == slug))
+        .filter((func.lower(StoreModel.name) == cleaned_name.lower()) | (StoreModel.slug == slug))
         .first()
     )
     if store:
@@ -745,18 +746,31 @@ def compare_product_store_prices(
             detail="Product not found in canonical catalog",
         )
 
-    observations = (
+    raw_observations = (
         db.query(PriceObservationModel)
         .filter(PriceObservationModel.product_id == product_id)
         .order_by(
-            PriceObservationModel.price_cents.asc(),
             PriceObservationModel.observation_date.desc(),
+            PriceObservationModel.updated_at.desc(),
         )
         .all()
     )
 
-    obs_responses = [_to_observation_response(obs, product) for obs in observations]
-    unique_stores = {obs.store_name for obs in observations}
+    # De-duplicate to newest observation per store
+    latest_per_store: dict[str, PriceObservationModel] = {}
+    for obs in raw_observations:
+        store_key = obs.store_id or obs.store_name.lower().strip()
+        if store_key not in latest_per_store:
+            latest_per_store[store_key] = obs
+
+    # Sort latest observations by price asc
+    sorted_observations = sorted(
+        latest_per_store.values(),
+        key=lambda o: (o.price_cents, o.observation_date),
+    )
+
+    obs_responses = [_to_observation_response(obs, product) for obs in sorted_observations]
+    unique_stores = {obs.store_name for obs in sorted_observations}
     cheapest = obs_responses[0] if obs_responses else None
 
     return ProductPricesComparisonResponse(

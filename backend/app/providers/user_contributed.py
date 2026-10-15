@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.domain.models import PriceSource, ProductOffer, Store
 from app.providers.base import RetailerProvider
@@ -115,7 +115,7 @@ class UserContributedRetailerProvider(RetailerProvider):
             )
 
         # Conflict resolution: newest observation per (store_id, product_id)
-        latest_by_pair: dict[tuple[str, str], any] = {}
+        latest_by_pair: dict[tuple[str, str], Any] = {}
         for obs in raw_observations:
             sid = obs.store_id or store_ids[0]
             key = (sid, obs.product_id)
@@ -163,6 +163,7 @@ class UserContributedRetailerProvider(RetailerProvider):
                     observation_date=obs_date_str,
                     is_stale=is_stale,
                     source_attribution=f"User-entered observation ({obs_date_str})",
+                    is_promotional=getattr(obs, "is_promotional", False),
                 )
             )
 

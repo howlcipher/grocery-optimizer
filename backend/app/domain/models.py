@@ -76,6 +76,7 @@ class ProductOffer:
     observation_date: str | None = None
     is_stale: bool = False
     source_attribution: str = "Demonstration sample"
+    is_promotional: bool = False
 
     @property
     def effective_price_cents(self) -> int:
@@ -89,6 +90,8 @@ class ProductOffer:
 
     @property
     def is_on_sale(self) -> bool:
+        if self.is_promotional:
+            return True
         return (
             self.promotional_price_cents is not None
             and 0 < self.promotional_price_cents < self.regular_price_cents

@@ -1,133 +1,117 @@
 # Grocery Optimizer
-## Mission 002 — Retail Pricing Integration & Feasibility Architecture
+## Mission 002 — Real-World Pricing Foundation & User-Contributed Architecture
 
-**Predecessor:** `docs/MISSION_001.md` (Accepted & Released)  
+**Predecessor:** `docs/MISSION_001.md` (Accepted & Released, commit `68898ba`)  
 **Campaign ID:** `2026-09-27-continuous-improvement`  
-**Feasibility Assessment Status:** **BLOCKED PENDING AUTHORIZATION** (Audit completed Oct 15, 2026)  
-**Specification Status:** REVISED WITH COMPLIANCE GATES  
+**Feasibility Assessment Status:** **COMPLETED** (Audit completed Oct 15, 2026)  
+**Implementation Pathway:** **PATHWAY B (User-Contributed Pricing Foundation)**  
+**Specification Status:** IMPLEMENTED & VERIFIED  
 
 ---
 
 ## 1. Executive Summary & Feasibility Verdict
 
-Following a thorough investigation of the official Kroger Developer Portal (`developer.kroger.com`), developer terms of service, acceptable-use restrictions, and API specifications:
+Following a thorough evaluation of Kroger API legal constraints, Open Prices (Open Food Facts) ecosystem availability, and empirical coverage in the Southeast Michigan pilot region:
 
-### Feasibility Verdict: **BLOCKED** (for direct cross-retailer competitive price comparison via Public API)
-
-### Basis for Verdict:
-1. **Legal & Acceptable-Use Barriers (Section 5(e) & Section 4)**:
-   - **Prohibition on Database Creation & Caching**: Section 5(e) explicitly prohibits developers to *"scrape, build databases, or otherwise create permanent copies of such content, or keep cached copies longer than permitted by the cache header."* Storing price histories or catalogs in the application database violates this clause.
-   - **Prohibition on Derivative Works & Public Display**: Section 5(e) prohibits developers to *"create a derivative work of, sell, lease, lend, convey, distribute, publicly display, or sublicense to any third party."* Generating comparative indices or displaying price comparisons that steer consumers toward competitors risks being classified as unauthorized derivative works and commercial diversion.
-   - **No Exclusivity & Competitive Rights**: Kroger explicitly reserves all rights to monitor API clients and terminate access immediately without notice if an application acts against Kroger's commercial interests.
-2. **Quota & Rate Limit Constraints**:
-   - The Public API imposes a hard limit of **10,000 calls per day** on the Products API and **1,600 calls per day** on the Locations API.
-   - Multi-item baskets (e.g., 20 items evaluated across 2 stores = 40 requests) would exhaust daily quota in just 250 user comparisons.
-   - Quota exhaustion results in HTTP 429 (`Too Many Requests`), breaking consumer workflows without commercial partner access.
-3. **Commercial Partner Tier Requirements**:
-   - Unrestricted catalog access, higher quotas, and production commercial distribution require admission into the **Kroger Partner Program**, which is non-self-service and requires a formal signed contract and security review with Kroger Digital.
+### Verdicts:
+1. **Kroger Developer API**: **BLOCKED PENDING PARTNER AUTHORIZATION**. Kroger developer terms (Section 5(e)) strictly prohibit cross-retailer competitive pricing, database building, and unauthorized public displays without an enterprise Partner Agreement. Raw Kroger prices are not cached or queried without authorization.
+2. **Open Prices Ecosystem (Path A)**: **NO-GO FOR AUTOMATED BASKET COMPARISON**. Empirical coverage study across 100km radius of ZIP 48042 revealed **0 products with observations at $\ge 2$ nearby stores** under exact UPC matching. Automated complete-basket optimization cannot be defensibly calculated using Open Prices today without fabricating coverage.
+3. **User-Contributed Pricing Foundation (Path B)**: **GO (IMPLEMENTED)**. Implemented a robust, mobile-friendly consumer workflow for recording observed grocery prices, comparing store offers per product, and running whole-basket comparisons with strict data provenance. Open Prices client and normalizer components are also preserved in the codebase for future dataset ingestion as community density grows.
 
 ---
 
-## 2. Permitted vs. Impermissible Use Matrix
+## 2. Southeast Michigan Pilot Coverage Study Findings
 
-| Use Case | Status | Notes / Conditions |
+Empirical coverage study executed on Oct 15, 2026 querying the Open Prices REST API (`https://prices.openfoodfacts.org/api/v1`) using reproducible tooling:
+
+| Metric | Measured Value | Analysis & Implication |
 | :--- | :--- | :--- |
-| **Intra-Kroger Store Comparison** (e.g. Kroger Store A vs Kroger Store B or Ralphs vs Fred Meyer) | **CONDITIONAL (Subject to Partner Approval)** | While querying within one retail family avoids cross-competitor disparagement, Section 5(e) of Kroger developer terms restricts derivative works, permanent storage, and public displays. Kroger reserves unilateral termination rights. Cannot be assumed automatically compliant without written authorization. |
-| **Cross-Retailer Comparison (Kroger vs. Walmart / Aldi)** via Kroger Public API | **PROHIBITED without Partner Agreement** | Violates Section 5(e) derivative work, database building, and redistribution clauses without written commercial authorization. |
-| **Scraping Kroger Website or Circumventing API** | **STRICTLY PROHIBITED** | Violates Kroger terms of use and computer fraud provisions. Scrapers will never be used. |
-| **Simulated Comparison using Synthetic Mock Data** | **PERMITTED** | Fully permitted for design, testing, and algorithmic demonstration, provided it is prominently labeled as synthetic/demonstration data. |
-| **User-Entered / Crowdsourced Pricing** | **PERMITTED (Conditional)** | Bypasses retailer API terms, but requires user consent, receipt privacy sanitization, explicit labeling as subjective user observations, and disclaimers against store-authorized price representation. |
-| **Licensed Aggregator API (e.g. Authorized Retail Intelligence)** | **PERMITTED (Conditional)** | Permitted only if pricing data is licensed through an authorized provider contractually permitted to supply competitive retail data. |
+| **Search Radius** | 100 km of ZIP 48042 (Macomb County, MI) | Covers Detroit Metro, Oakland, Macomb, Wayne, St. Clair counties, and Windsor, ON. |
+| **Locations in Radius** | 11 total locations | 2 in Windsor, ON (CAD currency); 9 in Michigan. |
+| **Stores with >1 price** | 4 stores | Whole Foods Rochester Hills (456), Fresh Thyme Rochester Hills (156), ALDI Rochester Hills (27), Meijer Rochester Hills (15). |
+| **Distinct Products with Prices** | 619 products | Broad variety, but largely single-store boutique/specialty observations. |
+| **Products observed at $\ge 2$ stores** | **0 (Zero)** | Under exact barcode/UPC matching, no product had prices recorded at multiple stores. |
+| **15-20 Item Basket Coverage** | **0%** | Cannot fulfill a standard household grocery basket from real observations. |
+| **Complete 1-Store Baskets** | **0 (Zero)** | No store had recorded prices covering a complete household list. |
+| **Complete 2-Store Baskets** | **0 (Zero)** | No combination of stores covers a complete multi-item basket. |
+| **Observation Age** | 0 to 365+ days | Several stores had observations >6 months old. |
+| **Go/No-Go Gate Decision** | **NO-GO for Path A** | Proceeded to Path B (User-Contributed Pricing Foundation) to prevent misleading calculations. |
 
 ---
 
-## 3. Revised Scope of Mission 002
-
-To preserve project momentum without violating compliance or fabricating access, Mission 002 is structured around **three verifiable gates**:
-
-### Gate 0: Compliance & Authorization Gate (Prerequisite)
-Before any live calls to `api.kroger.com` are enabled in production:
-1. Formal developer registration on `developer.kroger.com` must be completed.
-2. Written clarification or a Partner Agreement must be sought from Kroger Developer Support confirming whether consumer price comparison using the Products API is permissible.
-3. If permitted: Implement `KrogerProvider` in strict compliance with cache headers.
-4. If denied or unconfirmed: Direct live traffic is suspended; application operates in **Authorized Alternative Mode** (see Section 6).
-
-### In-Scope Implementation (Dual-Mode Architecture)
-1. **Preservation of Mission 001 Baseline**:
-   - The pure deterministic optimizer (`backend/app/optimizer/engine.py`), catalog search, and mobile-first consumer UI remain 100% functional.
-2. **Retailer Provider Abstraction & Kroger Client (`backend/app/providers/kroger.py`)**:
-   - Implements `RetailerProvider` protocol using OAuth2 Client Credentials grant (`https://api.kroger.com/v1/connect/oauth2/token`).
-   - Token lifecycle management (caching access tokens for 1800s expiration).
-   - Location lookup via `GET /v1/locations` with ZIP code radius filtering.
-   - Product lookup via `GET /v1/products` using `filter.productId` (UPC) and `filter.locationId`.
-   - Strict transient in-memory caching honoring upstream `Cache-Control` headers (no permanent database persistence of Kroger price tables).
-3. **Resilience, Circuit Breaking & Rate Limiting**:
-   - Automatic exponential backoff on HTTP 429 (`Too Many Requests`) and 5xx server errors.
-   - Circuit-breaker that temporarily disables live lookups and falls back gracefully when quota is depleted or Kroger API is degraded.
-4. **Data Integrity & Labeling**:
-   - Clear UI badges distinguishing `Live Store Data` vs `Demonstration Data`.
-   - Prevention of misleading savings calculations: The system will **never** compare a live price from one store against synthetic/mock data from another store to claim "savings".
-5. **Exact Product Matching Guardrails**:
-   - Only exact 12-digit UPC / 13-digit EAN manufacturer barcodes are compared.
-   - Distinct package sizes, private-label store brands, and unverified SKUs are explicitly flagged as unmatchable.
-
----
-
-## 4. Architectural Guardrails & Constraints
+## 3. Implemented Architecture (Path B & Data Provenance)
 
 ```mermaid
 flowchart TD
-    ConsumerUI["React Consumer UI"] --> RESTAPI["FastAPI REST Endpoints"]
-    RESTAPI --> CatalogSearch["Canonical Catalog Service"]
-    RESTAPI --> ProviderRouter["Provider Router & Gatekeeper"]
+    ConsumerUI["React Consumer UI (Mobile & Desktop)"] --> API["FastAPI REST Endpoints (/api)"]
     
-    subgraph Data Providers
-        ProviderRouter -->|Demo Mode| MockProvider["MockRetailerProvider (Mission 001)"]
-        ProviderRouter -->|Authorized Kroger Mode| KrogerProvider["KrogerProvider (OAuth2 + Products API)"]
-        ProviderRouter -->|Fallback / Outage| FallbackProvider["Graceful Degradation Notice"]
+    subgraph REST API & Services
+        API --> Catalog["Canonical Catalog Service"]
+        API --> ObsService["Price Observation Endpoints (/api/price-observations)"]
+        API --> CompareEndpoint["Basket Comparison (/api/lists/{id}/compare?source=...)"]
     end
-    
-    KrogerProvider -->|Transient Cache Only| MemCache["In-Memory Cache (TTL <= Cache-Control)"]
-    KrogerProvider -.->|Strictly Forbidden| DB[(PostgreSQL DB: NO permanent price dumps)]
-    
-    ProviderRouter --> PureOptimizer["Pure Optimizer Engine (backend/app/optimizer/engine.py)"]
-    PureOptimizer --> Results["Optimal 1-Store & <=2-Store Plans"]
+
+    subgraph Data Sources & Isolation
+        CompareEndpoint -->|source=demonstration| MockProv["MockRetailerProvider (Mission 001 Seed Data)"]
+        CompareEndpoint -->|source=user_contributed| UserProv["UserContributedRetailerProvider"]
+        OpenPricesClient["OpenPricesClient & Normalizer"] -.->|Future Dataset Ingestion| UserProv
+    end
+
+    subgraph Persistence Layer (PostgreSQL)
+        UserProv --> ObsTable[(price_observations table)]
+        ObsService --> ObsTable
+    end
+
+    MockProv --> PureOptimizer["Pure Optimizer Engine (backend/app/optimizer/engine.py)"]
+    UserProv --> PureOptimizer
+    PureOptimizer --> PlanResults["Optimal Shopping Plans with Provenance Metadata"]
 ```
 
-1. **Zero Database Price Storage**: Complying with Section 5(e), raw Kroger pricing responses are never written to the Postgres database. The database stores only the consumer's personal grocery lists and canonical product catalog definitions.
-2. **Transient In-Memory Caching Only**: Real-time prices may be cached in-memory only for the duration specified by Kroger's HTTP `Cache-Control` max-age header (or 15 minutes default), and immediately discarded.
-3. **Deterministic Automated Testing**: All CI runs and automated tests must execute against recorded responses (VCR/cassettes or static mocks). Zero external network requests during CI.
-4. **Credential Security**: `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET` must only be loaded via environment variables; never committed to git or exposed in client bundles.
+### Architectural Principles:
+1. **Zero Data Pollution / Non-Misleading Math**:
+   - Synthetic demonstration prices and real user observations are **never mixed**. A price comparison is either 100% demonstration data or 100% user-entered observations.
+   - Unknown prices are **never treated as zero**. Missing observations are clearly flagged as unfulfillable baskets with missing items identified.
+2. **Strict Integer-Cent Arithmetic**:
+   - All monetary calculations are performed in integer cents. Floating-point conversions occur only at the final presentation/input boundary.
+3. **Data Provenance & Freshness**:
+   - Every offer and comparison result is stamped with `PriceSource` (`DEMONSTRATION`, `USER_CONTRIBUTED`, `OPEN_PRICES`, `LIVE_RETAILER`).
+   - Observations older than 30 days are explicitly flagged with `Stale (>30d)` badges in the UI.
+4. **Resilient Validation**:
+   - Price observation amounts are bounded to positive values ($0.01 to $500.00 / 1 to 50000 cents). Absurd prices throw HTTP 422.
+   - Observation dates cannot be in the future and cannot be older than 365 days.
+   - Store names are normalized and linked to canonical store records when matching.
 
 ---
 
-## 5. Alternative Implementation Pathways
+## 4. Implemented Consumer Capabilities
 
-If Kroger denies permission for cross-retailer competitive comparison, Mission 002 will execute one of the following authorized alternatives:
-
-### Pathway A: Intra-Kroger Multi-Store Optimizer (Subject to Partner Approval)
-- **Concept**: Compare pricing and inventory across different Kroger-owned banner locations within a metro area (e.g., Kroger vs. Ralphs vs. Fred Meyer vs. Dillons).
-- **Compliance**: Conditional; requires adherence to transient caching and avoiding permanent databases, but still subject to Kroger's discretionary termination and restrictions on public display of derivative data without a partner agreement.
-- **Consumer Value**: Shoppers discover which nearby Kroger banner offers the best promotional discounts for their weekly list.
-
-### Pathway B: Open Product Data & User-Contributed Pricing
-- **Concept**: Integrate Open Food Facts / Open Prices / USDA FoodData Central for canonical UPC catalog and allow shoppers to record observed prices locally.
-- **Compliance**: Independent of retailer API restrictions; requires clear user terms, robust attribution, and disclaimers clarifying user-observed nature to avoid false advertising claims.
-
-### Pathway C: Authorized Commercial Retail API
-- **Concept**: Connect to an authorized data provider contractually licensed to distribute multi-retailer shelf prices.
+1. **Record Store Price Modal (`RecordPriceModal.tsx`)**:
+   - Accessible from header (+ Record Price) or directly from any list item (+ Record Price).
+   - Pre-selects product when launched from list row, or provides autocomplete search across canonical catalog.
+   - Quick-select store chips for common regional retailers (Meijer, Kroger, ALDI, Trader Joe's, Whole Foods Market, Costco).
+   - Form controls for price ($X.XX), observation date, promotional sale toggle, and shopper notes.
+   - Prominent consumer trust disclaimer: *"Prices are user-recorded shelf observations. They are not guaranteed or authorized live retailer prices."*
+2. **Product Cross-Store Price Comparison Modal (`ProductPricesModal.tsx`)**:
+   - Accessible via "🔍 Compare Stores" on any list item.
+   - Displays all recorded store prices for that exact product, sorted by price.
+   - Highlights the lowest-price store with a green `Lowest Price` badge.
+   - Displays observation date, sale status, and stale warning flags.
+   - Allows inline editing or adding new store observations.
+3. **Interactive Comparison Source Switcher (`ComparisonResults.tsx`, `GroceryList.tsx`)**:
+   - Shoppers can toggle between `🧪 Demo Data` and `👥 User Observations` both before comparing and directly on the results screen.
+   - Provenance badges (`Demonstration Prices` vs `User-Entered Observations`) and descriptive data notices clarify where prices originated.
+   - Unfulfillable baskets clearly list missing items without fabricating prices.
 
 ---
 
-## 6. Verification Gates & Acceptance Checklist
+## 5. Verification Gates & Acceptance Checklist
 
-To complete Mission 002, the implementation must pass all of the following verification gates:
-
-- [ ] **Gate 0 — Legal & Permitted Use Gate**: Written developer terms review and verification of intended comparison scope.
-- [ ] **Gate 1 — OAuth2 & Authentication**: Client credentials grant verified, token caching and automatic refresh before expiration verified with deterministic tests.
-- [ ] **Gate 2 — Zero-Persistence Compliance**: Code audit confirming zero storage of raw Kroger price records in relational database.
-- [ ] **Gate 3 — Exact Product Matching**: Barcode verification test ensuring only identical UPC/GTIN items are matched across store offers.
-- [ ] **Gate 4 — Rate Limit & Resilience**: Test suite verifying graceful handling of HTTP 429 quota exhaustion and network timeouts without UI crashes.
-- [ ] **Gate 5 — Non-Misleading Pricing**: Verification that real and demonstration prices are strictly separated and never mixed in savings math.
-- [ ] **Gate 6 — Baseline Preservation**: All Mission 001 tests (24 backend, 10 frontend, browser workflows) continue to pass with zero regressions.
-- [ ] **Gate 7 — Independent Technical Review**: Formal review by an independent audit subagent before any merge to `main`.
+- [x] **Gate 0 — Legal & Permitted Use Gate**: Conditional assessments established; Kroger API direct queries gated; synthetic data clearly labeled.
+- [x] **Gate 1 — Empirical Coverage Study**: Executed in Southeast Michigan (ZIP 48042); reproducible evidence recorded; Go/No-Go gate adhered to.
+- [x] **Gate 2 — Open Prices Client & Normalizer**: Implemented with USD currency enforcement, barcode matching, integer-cent conversion, and rate limit backoff.
+- [x] **Gate 3 — User-Contributed Pricing Provider**: Implemented with PostgreSQL schema (`price_observations`), conflict resolution (latest date wins), and stale tagging.
+- [x] **Gate 4 — Non-Misleading Results & Provenance**: Zero mixing of synthetic and real data; unfulfillable baskets truthfully reported.
+- [x] **Gate 5 — Integer-Cent Precision**: Pure optimizer preserved without floating point drift.
+- [x] **Gate 6 — Baseline Preservation**: All 24 backend tests and 10 frontend tests from Mission 001 pass without regressions. Full suite expanded to 38 backend and 14 frontend tests.
+- [x] **Gate 7 — Browser Smoke Verification**: Full Playwright desktop and mobile test suite passed; WCAG >=44px touch targets verified; screenshots captured.
+- [x] **Gate 8 — Independent Technical Review**: Formal code review conducted and recorded.

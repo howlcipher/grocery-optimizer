@@ -95,7 +95,7 @@ export const GroceryList: React.FC<GroceryListProps> = ({
                       <button
                         type="button"
                         className="link-button touch-target"
-                        style={{ height: 26, fontSize: "0.8rem", color: "var(--color-primary)" }}
+                        style={{ fontSize: "0.85rem", color: "var(--color-primary)", padding: "4px 8px" }}
                         onClick={() => onCompareProductPrices(item.product)}
                         aria-label={`Compare store prices for ${item.product.name}`}
                       >
@@ -106,7 +106,7 @@ export const GroceryList: React.FC<GroceryListProps> = ({
                       <button
                         type="button"
                         className="link-button touch-target"
-                        style={{ height: 26, fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+                        style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", padding: "4px 8px" }}
                         onClick={() => onRecordPriceForProduct(item.product)}
                         aria-label={`Record price for ${item.product.name}`}
                       >
