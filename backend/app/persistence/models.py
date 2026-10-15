@@ -7,6 +7,7 @@ from sqlalchemy import (
     Column,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -44,6 +45,8 @@ class StoreModel(Base):
     city = Column(String(128), nullable=True)
     state = Column(String(32), nullable=True)
     zip_code = Column(String(20), nullable=True, index=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     is_unresolved_location = Column(Boolean, nullable=False, default=False)
 
     retailer = relationship("RetailerModel", back_populates="stores")

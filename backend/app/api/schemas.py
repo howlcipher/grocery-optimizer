@@ -65,6 +65,8 @@ class StoreResponse(BaseModel):
     city: str | None = None
     state: str | None = None
     zip_code: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     is_unresolved_location: bool = False
 
     model_config = {"from_attributes": True}
@@ -100,6 +102,8 @@ class ComparisonResponse(BaseModel):
     is_demonstration: bool = True
     data_notice: str | None = None
     zip_code: str | None = None
+    region_scope: str = "exact"
+    compared_zip_codes: list[str] = Field(default_factory=list)
 
 
 # Price Observation Schemas
@@ -112,6 +116,8 @@ class PriceObservationCreateRequest(BaseModel):
     city: str | None = Field(default=None, max_length=128)
     state: str | None = Field(default=None, max_length=32)
     zip_code: str | None = Field(default=None, max_length=20)
+    latitude: float | None = Field(default=None)
+    longitude: float | None = Field(default=None)
     price_cents: int = Field(ge=1, le=50000, description="Price in integer cents ($0.01 to $500.00)")
     observation_date: str = Field(description="ISO observation date YYYY-MM-DD")
     is_promotional: bool = False
@@ -134,12 +140,22 @@ class BatchPriceObservationCreateRequest(BaseModel):
     city: str | None = Field(default=None, max_length=128)
     state: str | None = Field(default=None, max_length=32)
     zip_code: str | None = Field(default=None, max_length=20)
+    latitude: float | None = Field(default=None)
+    longitude: float | None = Field(default=None)
     observation_date: str = Field(description="ISO observation date YYYY-MM-DD")
     items: list[TripItemObservation] = Field(min_length=1, max_length=50)
 
 
 class PriceObservationUpdateRequest(BaseModel):
     store_name: str | None = Field(default=None, min_length=1, max_length=255)
+    store_id: str | None = Field(default=None)
+    retailer_name: str | None = Field(default=None, max_length=255)
+    address: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=128)
+    state: str | None = Field(default=None, max_length=32)
+    zip_code: str | None = Field(default=None, max_length=20)
+    latitude: float | None = Field(default=None)
+    longitude: float | None = Field(default=None)
     price_cents: int | None = Field(default=None, ge=1, le=50000)
     observation_date: str | None = None
     is_promotional: bool | None = None

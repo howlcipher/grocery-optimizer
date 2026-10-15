@@ -10,6 +10,7 @@ import { ComparisonResponse, Product } from "../src/types";
 vi.mock("../src/api/client", () => ({
   api: {
     searchProducts: vi.fn(),
+    getProducts: vi.fn().mockResolvedValue([]),
     createPriceObservation: vi.fn(),
     updatePriceObservation: vi.fn(),
     createBatchPriceObservations: vi.fn(),

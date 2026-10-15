@@ -27,6 +27,8 @@ class Store:
     city: str | None = None
     state: str | None = None
     zip_code: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     is_unresolved_location: bool = False
 
 

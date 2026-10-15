@@ -33,6 +33,8 @@ export interface StoreResponse {
   city?: string | null;
   state?: string | null;
   zip_code?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   is_unresolved_location?: boolean;
 }
 
@@ -66,6 +68,8 @@ export interface ComparisonResponse {
   is_demonstration: boolean;
   data_notice: string | null;
   zip_code?: string | null;
+  region_scope?: string | null;
+  compared_zip_codes?: string[];
 }
 
 export interface SavedListMetadata {
@@ -114,6 +118,8 @@ export interface BatchPriceObservationRequest {
   city?: string | null;
   state?: string | null;
   zip_code?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   observation_date: string;
   items: TripItemObservation[];
 }
@@ -131,4 +137,25 @@ export interface ProductPricesComparisonResponse {
   store_count: number;
   source: string;
   disclaimer: string;
+}
+
+export interface ParsedReceiptItem {
+  rawText: string;
+  matchedProductId: string | null;
+  matchedProductName: string | null;
+  matchConfidence: "high" | "medium" | "unmatched";
+  candidateProducts?: Product[];
+  priceCents: number;
+  quantity?: number;
+  isPromotional?: boolean;
+}
+
+export interface ParsedReceipt {
+  storeName?: string | null;
+  date?: string | null;
+  address?: string | null;
+  zipCode?: string | null;
+  items: ParsedReceiptItem[];
+  rawText: string;
+  ignoredLines: string[];
 }

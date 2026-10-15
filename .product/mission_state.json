@@ -1,8 +1,8 @@
 {
   "schema": "grocery_optimizer.mission_state/v1",
   "campaign_id": "2026-09-27-continuous-improvement",
-  "latest_completed_mission": "docs/MISSION_003.md",
-  "next_mission": "docs/MISSION_004.md",
+  "latest_completed_mission": "docs/MISSION_004.md",
+  "next_mission": "docs/MISSION_005.md",
   "status": "COMPLETE",
   "open_findings": {
     "GO-002": {
@@ -46,7 +46,25 @@
       "category": "User Experience",
       "summary": "High price entry friction resolved via Shopping Trip multi-item batch entry mode (>55% action reduction) and recent store caching",
       "status": "RESOLVED"
+    },
+    "GO-010": {
+      "severity": "P1",
+      "category": "Data Integrity",
+      "summary": "Same-ZIP store collisions when street address is omitted resolved by creating isolated unresolved-location store records",
+      "status": "RESOLVED"
+    },
+    "GO-011": {
+      "severity": "P2",
+      "category": "Data Integrity",
+      "summary": "Observation PATCH flow discarding known store locality corrected to preserve existing physical address, city, state, zip, and coordinates",
+      "status": "RESOLVED"
+    },
+    "GO-012": {
+      "severity": "P1",
+      "category": "Security / Availability",
+      "summary": "Public observation endpoints protected via sliding window rate limiter (60/min single, 20/min batch) and atomic transactional batch validation",
+      "status": "RESOLVED"
     }
   },
-  "updated_at": "2026-10-15T18:10:00Z"
+  "updated_at": "2026-10-15T19:42:00Z"
 }

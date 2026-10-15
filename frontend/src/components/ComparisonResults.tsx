@@ -7,6 +7,7 @@ interface ComparisonResultsProps {
   onBackToList: () => void;
   onSwitchSource?: (source: "demonstration" | "user_contributed") => void;
   onFilterZip?: (zip: string | null) => void;
+  onSetRegionScope?: (scope: "exact" | "neighborhood") => void;
   isSwitching?: boolean;
 }
 
@@ -15,6 +16,7 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
   onBackToList,
   onSwitchSource,
   onFilterZip,
+  onSetRegionScope,
   isSwitching = false,
 }) => {
   const { one_store_plan, best_plan, savings_cents, additional_stops, zip_code } = comparison;
@@ -69,14 +71,33 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
       {/* Data Source Provenance Notice */}
       <div className={`consumer-notice-box ${comparison.is_demonstration ? "demo-notice" : "user-notice"}`} style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span className={`provenance-pill ${comparison.is_demonstration ? "pill-demo" : "pill-user"}`}>
               {comparison.pricing_source_label || (comparison.is_demonstration ? "Demonstration Prices" : "User-Entered Observations")}
             </span>
             {zip_code && (
               <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--color-primary)", background: "#e0f2fe", padding: "2px 8px", borderRadius: 4 }}>
-                📍 Filtered to ZIP {zip_code}
+                📍 {zip_code}
               </span>
+            )}
+
+            {!comparison.is_demonstration && zip_code && onSetRegionScope && (
+              <div className="region-scope-group" role="group" aria-label="Geographic comparison scope">
+                <button
+                  type="button"
+                  className={`region-scope-btn ${comparison.region_scope !== "neighborhood" ? "active" : ""}`}
+                  onClick={() => onSetRegionScope("exact")}
+                >
+                  This ZIP
+                </button>
+                <button
+                  type="button"
+                  className={`region-scope-btn ${comparison.region_scope === "neighborhood" ? "active" : ""}`}
+                  onClick={() => onSetRegionScope("neighborhood")}
+                >
+                  Nearby Stores
+                </button>
+              </div>
             )}
           </div>
 
@@ -123,6 +144,12 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
               ? "Prices shown are demonstration sample data from the mission seeder for feature testing."
               : "Prices are user-entered observations. Missing observation data does not mean stores lack this item. Never mixed with synthetic data.")}
         </p>
+
+        {comparison.compared_zip_codes && comparison.compared_zip_codes.length > 1 && (
+          <div style={{ marginTop: 6, fontSize: "0.8rem", color: "#166534", fontWeight: 600 }}>
+            📍 Regional comparison includes physical stores across ZIPs: {comparison.compared_zip_codes.join(", ")}
+          </div>
+        )}
       </div>
 
       {/* Unfulfillable Basket Warning */}
