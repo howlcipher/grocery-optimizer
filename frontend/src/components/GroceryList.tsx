@@ -1,12 +1,13 @@
 import React, { useState } from "react";
 import { GroceryItem, GroceryList as GroceryListType, Product } from "../types";
+import { getSelectedZipCode, setSelectedZipCode as saveSelectedZip } from "../lib/storage";
 
 interface GroceryListProps {
   list: GroceryListType;
   onUpdateListName: (name: string) => void;
   onUpdateQuantity: (itemId: string, newQty: number) => void;
   onRemoveItem: (itemId: string) => void;
-  onComparePrices: (source: "demonstration" | "user_contributed") => void;
+  onComparePrices: (source: "demonstration" | "user_contributed", zipCode?: string | null) => void;
   onCompareProductPrices?: (product: Product) => void;
   onRecordPriceForProduct?: (product: Product) => void;
   isComparing: boolean;
@@ -24,6 +25,7 @@ export const GroceryList: React.FC<GroceryListProps> = ({
 }) => {
   const [listName, setListName] = useState(list.name || "My Grocery List");
   const [pricingMode, setPricingMode] = useState<"demonstration" | "user_contributed">("demonstration");
+  const [zipCode, setZipCode] = useState(getSelectedZipCode() || "");
 
   const handleNameBlur = () => {
     if (listName.trim() !== (list.name || "")) {
@@ -35,6 +37,11 @@ export const GroceryList: React.FC<GroceryListProps> = ({
     if (e.key === "Enter") {
       e.currentTarget.blur();
     }
+  };
+
+  const handleZipChange = (val: string) => {
+    setZipCode(val.trim());
+    saveSelectedZip(val.trim() || null);
   };
 
   const isEmpty = list.items.length === 0;
@@ -183,6 +190,28 @@ export const GroceryList: React.FC<GroceryListProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Area ZIP input for user observations */}
+            {pricingMode === "user_contributed" && (
+              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <label htmlFor="user-zip-input" style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                  Shopping Area ZIP:
+                </label>
+                <input
+                  id="user-zip-input"
+                  type="text"
+                  className="search-input"
+                  style={{ width: 110, height: 34, fontSize: "0.85rem", padding: "0 8px" }}
+                  placeholder="e.g. 48042"
+                  value={zipCode}
+                  onChange={(e) => handleZipChange(e.target.value)}
+                />
+                <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                  Leave blank to compare across all observed stores
+                </span>
+              </div>
+            )}
+
             <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: 6 }}>
               {pricingMode === "demonstration"
                 ? "Uses synthetic demonstration store offers from Mission 001 seed data."
@@ -200,14 +229,16 @@ export const GroceryList: React.FC<GroceryListProps> = ({
                 fontSize: "1.1rem",
                 borderRadius: "var(--radius-md)",
               }}
-              onClick={() => onComparePrices(pricingMode)}
+              onClick={() => onComparePrices(pricingMode, zipCode || null)}
               disabled={isEmpty || isComparing}
               aria-label="Compare prices across stores"
             >
               {isComparing
                 ? "Comparing Prices..."
                 : pricingMode === "user_contributed"
-                ? "Compare User-Entered Prices →"
+                ? zipCode
+                  ? `Compare User Prices in ZIP ${zipCode} →`
+                  : "Compare User-Entered Prices →"
                 : "Compare Demonstration Prices →"}
             </button>
           </div>

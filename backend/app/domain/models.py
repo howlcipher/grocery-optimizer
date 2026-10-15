@@ -23,6 +23,11 @@ class Store:
     name: str
     slug: str
     sort_order: int
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zip_code: str | None = None
+    is_unresolved_location: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,7 @@ class PriceObservation:
     is_promotional: bool = False
     notes: str | None = None
     contributor_id: str | None = None
+    edit_token: str | None = None
     source: PriceSource = PriceSource.USER_CONTRIBUTED
     created_at: str | None = None
     updated_at: str | None = None

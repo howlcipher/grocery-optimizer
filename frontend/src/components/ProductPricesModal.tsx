@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { PriceObservation, Product, ProductPricesComparisonResponse } from "../types";
 import { api } from "../api/client";
+import { getSelectedZipCode, hasObservationToken } from "../lib/storage";
 
 interface ProductPricesModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
   onRecordPriceForProduct,
 }) => {
   const [data, setData] = useState<ProductPricesComparisonResponse | null>(null);
+  const [zipFilter, setZipFilter] = useState(getSelectedZipCode() || "");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,14 +26,14 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      const res = await api.compareProductStorePrices(product.id);
+      const res = await api.compareProductStorePrices(product.id, zipFilter || null);
       setData(res);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load store prices");
     } finally {
       setIsLoading(false);
     }
-  }, [product]);
+  }, [product, zipFilter]);
 
   useEffect(() => {
     if (isOpen && product) {
@@ -60,6 +62,7 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="product-prices-title"
+        style={{ maxWidth: 640 }}
       >
         <div className="drawer-header">
           <div>
@@ -80,6 +83,29 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
           </button>
         </div>
 
+        {/* Location Filter Bar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>Filter by Area:</span>
+          <input
+            type="text"
+            className="search-input"
+            style={{ width: 110, height: 36, fontSize: "0.85rem", padding: "0 8px" }}
+            placeholder="e.g. 48042"
+            value={zipFilter}
+            onChange={(e) => setZipFilter(e.target.value.trim())}
+          />
+          {zipFilter && (
+            <button
+              type="button"
+              className="link-button"
+              style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+              onClick={() => setZipFilter("")}
+            >
+              Clear ZIP Filter
+            </button>
+          )}
+        </div>
+
         {error && (
           <div className="alert-box alert-error" role="alert">
             {error}
@@ -94,7 +120,7 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <span style={{ fontSize: "0.9rem", color: "var(--color-text-muted)" }}>
-                Prices observed across <strong>{data.store_count} stores</strong>
+                Prices observed across <strong>{data.store_count} stores</strong> {zipFilter ? `in ZIP ${zipFilter}` : ""}
               </span>
               <button
                 type="button"
@@ -109,6 +135,7 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {data.observations.map((obs, idx) => {
                 const isCheapest = idx === 0;
+                const isOwnObservation = hasObservationToken(obs.id);
                 return (
                   <div
                     key={obs.id}
@@ -117,7 +144,7 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <strong style={{ fontSize: "1.05rem" }}>{obs.store_name}</strong>
                           {isCheapest && (
                             <span className="savings-badge" style={{ padding: "2px 8px", fontSize: "0.75rem" }}>
@@ -129,8 +156,20 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
                               Sale
                             </span>
                           )}
+                          {isOwnObservation && (
+                            <span style={{ background: "#ecfdf5", color: "#065f46", border: "1px solid #a7f3d0", padding: "1px 6px", borderRadius: 4, fontSize: "0.75rem", fontWeight: 600 }}>
+                              Your Entry
+                            </span>
+                          )}
                         </div>
-                        <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+
+                        {/* Store Locality Info */}
+                        <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                          {obs.store_city || obs.store_zip_code ? (
+                            <span>📍 {obs.store_city ? `${obs.store_city}, ` : ""}{obs.store_state || ""} {obs.store_zip_code || ""} • </span>
+                          ) : obs.is_unresolved_location ? (
+                            <span style={{ fontStyle: "italic" }}>📍 Unresolved location • </span>
+                          ) : null}
                           Observed {obs.observation_date}
                           {obs.is_stale && (
                             <span className="stale-badge" style={{ marginLeft: 6 }}>
@@ -138,6 +177,7 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
                             </span>
                           )}
                         </div>
+
                         {obs.notes && (
                           <div style={{ fontSize: "0.8rem", fontStyle: "italic", marginTop: 4, color: "var(--color-text-muted)" }}>
                             "{obs.notes}"
@@ -149,14 +189,17 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
                         <span style={{ fontSize: "1.25rem", fontWeight: 800, color: "var(--color-primary)" }}>
                           {obs.formatted_price}
                         </span>
-                        <button
-                          type="button"
-                          className="link-button touch-target"
-                          style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", padding: "4px 8px", marginTop: 4 }}
-                          onClick={() => onRecordPriceForProduct(product, obs)}
-                        >
-                          Correct Entry
-                        </button>
+                        {isOwnObservation && (
+                          <button
+                            type="button"
+                            className="link-button touch-target"
+                            style={{ fontSize: "0.85rem", color: "var(--color-primary)", padding: "4px 8px", marginTop: 4 }}
+                            onClick={() => onRecordPriceForProduct(product, obs)}
+                            aria-label={`Correct your price observation for ${obs.store_name}`}
+                          >
+                            Correct Entry
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -166,7 +209,11 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
           </div>
         ) : (
           <div className="empty-state">
-            <p>No user-entered prices recorded for this product yet.</p>
+            <p>
+              {zipFilter
+                ? `No user-entered prices recorded in ZIP ${zipFilter} for this product yet.`
+                : "No user-entered prices recorded for this product yet."}
+            </p>
             <button
               type="button"
               className="btn btn-primary touch-target"

@@ -16,15 +16,18 @@ import { api } from "./api/client";
 import {
   getActiveListId,
   getSavedLists,
+  getSelectedZipCode,
   removeSavedList,
   saveListMetadata,
   setActiveListId,
+  setSelectedZipCode,
 } from "./lib/storage";
 
 export const App: React.FC = () => {
   const [list, setList] = useState<GroceryListType | null>(null);
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [comparisonSource, setComparisonSource] = useState<"demonstration" | "user_contributed">("demonstration");
+  const [selectedZipCode, setSelectedZipCodeState] = useState<string | null>(getSelectedZipCode());
   const [isComparing, setIsComparing] = useState(false);
   const [isSavedDrawerOpen, setIsSavedDrawerOpen] = useState(false);
   const [savedLists, setSavedLists] = useState(getSavedLists());
@@ -129,19 +132,29 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleComparePrices = async (source: "demonstration" | "user_contributed" = "demonstration") => {
+  const handleComparePrices = async (
+    source: "demonstration" | "user_contributed" = "demonstration",
+    zipCode?: string | null
+  ) => {
     if (!list || list.items.length === 0) return;
     setIsComparing(true);
     setError(null);
     setComparisonSource(source);
+    const activeZip = zipCode !== undefined ? zipCode : selectedZipCode;
     try {
-      const res = await api.comparePrices(list.id, source);
+      const res = await api.comparePrices(list.id, source, activeZip);
       setComparison(res);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to compare prices");
     } finally {
       setIsComparing(false);
     }
+  };
+
+  const handleFilterZip = (zip: string | null) => {
+    setSelectedZipCodeState(zip);
+    setSelectedZipCode(zip);
+    handleComparePrices(comparisonSource, zip);
   };
 
   const handleNewList = async () => {
@@ -204,11 +217,11 @@ export const App: React.FC = () => {
       <Header
         onOpenSavedLists={() => setIsSavedDrawerOpen(true)}
         onNewList={handleNewList}
-        onOpenRecordPrice={() => handleOpenRecordPriceModal(null, null)}
         savedListsCount={savedLists.length}
+        onOpenRecordPrice={() => handleOpenRecordPriceModal(null, null)}
       />
 
-      <main>
+      <main className="main-content">
         {error && (
           <div className="alert-box alert-error" role="alert">
             {error}
@@ -216,14 +229,15 @@ export const App: React.FC = () => {
         )}
 
         {isLoading ? (
-          <div className="empty-state">
+          <div className="loading-state">
             <p>Loading your grocery list...</p>
           </div>
         ) : comparison ? (
           <ComparisonResults
             comparison={comparison}
             onBackToList={() => setComparison(null)}
-            onSwitchSource={handleComparePrices}
+            onSwitchSource={(s) => handleComparePrices(s, selectedZipCode)}
+            onFilterZip={handleFilterZip}
             isSwitching={isComparing}
           />
         ) : list ? (
@@ -234,7 +248,10 @@ export const App: React.FC = () => {
               onUpdateListName={handleUpdateListName}
               onUpdateQuantity={handleUpdateQuantity}
               onRemoveItem={handleRemoveItem}
-              onComparePrices={handleComparePrices}
+              onComparePrices={(source, zip) => {
+                setSelectedZipCodeState(zip || null);
+                handleComparePrices(source, zip);
+              }}
               onCompareProductPrices={handleOpenProductPricesModal}
               onRecordPriceForProduct={(prod) => handleOpenRecordPriceModal(prod, null)}
               isComparing={isComparing}
@@ -269,7 +286,7 @@ export const App: React.FC = () => {
         editingObservationId={editingObservation?.id || null}
         onSaved={() => {
           if (comparison && comparisonSource === "user_contributed") {
-            handleComparePrices("user_contributed");
+            handleComparePrices("user_contributed", selectedZipCode);
           }
         }}
       />

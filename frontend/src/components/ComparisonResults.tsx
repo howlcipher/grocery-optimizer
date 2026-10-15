@@ -6,6 +6,7 @@ interface ComparisonResultsProps {
   comparison: ComparisonResponse;
   onBackToList: () => void;
   onSwitchSource?: (source: "demonstration" | "user_contributed") => void;
+  onFilterZip?: (zip: string | null) => void;
   isSwitching?: boolean;
 }
 
@@ -13,9 +14,10 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
   comparison,
   onBackToList,
   onSwitchSource,
+  onFilterZip,
   isSwitching = false,
 }) => {
-  const { one_store_plan, best_plan, savings_cents, additional_stops } = comparison;
+  const { one_store_plan, best_plan, savings_cents, additional_stops, zip_code } = comparison;
 
   // Group items by store for the best plan
   const itemsByStore: Record<string, PlanItemResponse[]> = {};
@@ -66,11 +68,55 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
 
       {/* Data Source Provenance Notice */}
       <div className={`consumer-notice-box ${comparison.is_demonstration ? "demo-notice" : "user-notice"}`} style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span className={`provenance-pill ${comparison.is_demonstration ? "pill-demo" : "pill-user"}`}>
-            {comparison.pricing_source_label || (comparison.is_demonstration ? "Demonstration Prices" : "User-Entered Observations")}
-          </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className={`provenance-pill ${comparison.is_demonstration ? "pill-demo" : "pill-user"}`}>
+              {comparison.pricing_source_label || (comparison.is_demonstration ? "Demonstration Prices" : "User-Entered Observations")}
+            </span>
+            {zip_code && (
+              <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--color-primary)", background: "#e0f2fe", padding: "2px 8px", borderRadius: 4 }}>
+                📍 Filtered to ZIP {zip_code}
+              </span>
+            )}
+          </div>
+
+          {!comparison.is_demonstration && onFilterZip && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label htmlFor="comp-zip-input" style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                Area ZIP:
+              </label>
+              <input
+                id="comp-zip-input"
+                type="text"
+                className="search-input"
+                style={{ width: 90, height: 32, fontSize: "0.8rem", padding: "0 6px" }}
+                placeholder="e.g. 48042"
+                defaultValue={zip_code || ""}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onFilterZip((e.target as HTMLInputElement).value.trim() || null);
+                  }
+                }}
+                onBlur={(e) => {
+                  if (e.target.value.trim() !== (zip_code || "")) {
+                    onFilterZip(e.target.value.trim() || null);
+                  }
+                }}
+              />
+              {zip_code && (
+                <button
+                  type="button"
+                  className="link-button"
+                  style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}
+                  onClick={() => onFilterZip(null)}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
         </div>
+
         <p style={{ marginTop: 6, fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
           {comparison.data_notice ||
             (comparison.is_demonstration
@@ -86,6 +132,8 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
           <p>
             {comparison.is_demonstration
               ? "We couldn't find a complete plan. These items aren't available at any combination of up to two stores:"
+              : zip_code
+              ? `We couldn't find a complete plan using user-recorded observations in ZIP ${zip_code}. These items have no recorded prices at physical stores in this area:`
               : "We couldn't find a complete plan using user-recorded observations. These items have no recorded prices for any combination of up to two stores:"}
           </p>
           <ul style={{ marginTop: 8, paddingLeft: 20 }}>
@@ -113,6 +161,17 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
               <div className="summary-stores">
                 {one_store_plan.stores.map((s) => s.name).join(", ")}
               </div>
+              {one_store_plan.stores.some((s) => s.city || s.zip_code) && (
+                <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                  {one_store_plan.stores
+                    .map((s) => {
+                      const cityState = s.city ? (s.state ? `${s.city}, ${s.state}` : s.city) : (s.state || "");
+                      return [cityState, s.zip_code].filter(Boolean).join(" ");
+                    })
+                    .filter(Boolean)
+                    .join(" • ")}
+                </div>
+              )}
               <div className="summary-total">
                 {formatCents(one_store_plan.total_cents)}
               </div>
@@ -137,6 +196,17 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
               <div className="summary-stores">
                 {best_plan.stores.map((s) => s.name).join(" + ")}
               </div>
+              {best_plan.stores.some((s) => s.city || s.zip_code) && (
+                <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                  {best_plan.stores
+                    .map((s) => {
+                      const cityState = s.city ? (s.state ? `${s.city}, ${s.state}` : s.city) : (s.state || "");
+                      return [cityState, s.zip_code].filter(Boolean).join(" ");
+                    })
+                    .filter(Boolean)
+                    .join(" • ")}
+                </div>
+              )}
               <div className="summary-total">
                 {formatCents(best_plan.total_cents)}
               </div>

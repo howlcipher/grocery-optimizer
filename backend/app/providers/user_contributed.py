@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 class UserContributedRetailerProvider(RetailerProvider):
     """Retailer provider that supplies offers from verified user-contributed
 
-    price observations.
+    price observations with physical store locality and multi-contributor conflict resolution.
     """
 
     def __init__(
@@ -21,18 +21,51 @@ class UserContributedRetailerProvider(RetailerProvider):
         db: "Session | None" = None,
         observations: "list[PriceObservationModel] | None" = None,
         stores: list[Store] | None = None,
+        zip_code: str | None = None,
+        stale_days_threshold: int = 30,
     ):
         self._db = db
         self._observations = observations
         self._stores = stores
+        self._zip_code = zip_code.strip() if zip_code and zip_code.strip() else None
+        self._stale_days_threshold = stale_days_threshold
 
     def get_stores(self) -> list[Store]:
-        """Return stores for which price observations or definitions exist."""
+        """Return stores for which price observations or definitions exist,
+
+        optionally filtered by geographic ZIP code.
+        """
         if self._stores is not None:
-            return list(self._stores)
+            stores = list(self._stores)
+            if self._zip_code:
+                return [s for s in stores if s.zip_code == self._zip_code and not s.is_unresolved_location]
+            return stores
 
         if self._db is not None:
             from app.persistence.models import PriceObservationModel, StoreModel
+
+            query = self._db.query(StoreModel)
+            if self._zip_code:
+                # Strictly filter to physical stores located in the specified ZIP
+                query = query.filter(
+                    StoreModel.zip_code == self._zip_code,
+                    StoreModel.is_unresolved_location.is_(False),
+                )
+                return [
+                    Store(
+                        id=s.id,
+                        retailer_id=s.retailer_id,
+                        name=s.name,
+                        slug=s.slug,
+                        sort_order=s.sort_order,
+                        address=s.address,
+                        city=s.city,
+                        state=s.state,
+                        zip_code=s.zip_code,
+                        is_unresolved_location=s.is_unresolved_location,
+                    )
+                    for s in query.all()
+                ]
 
             # Query all stores referenced in price observations or store table
             observed_store_ids = {
@@ -42,8 +75,7 @@ class UserContributedRetailerProvider(RetailerProvider):
                 .distinct()
                 .all()
             }
-            all_stores = self._db.query(StoreModel).all()
-            # If stores have observations, prioritize them, else return all stores
+            all_stores = query.all()
             matched = [s for s in all_stores if s.id in observed_store_ids]
             target_stores = matched if matched else all_stores
             return [
@@ -53,13 +85,18 @@ class UserContributedRetailerProvider(RetailerProvider):
                     name=s.name,
                     slug=s.slug,
                     sort_order=s.sort_order,
+                    address=s.address,
+                    city=s.city,
+                    state=s.state,
+                    zip_code=s.zip_code,
+                    is_unresolved_location=s.is_unresolved_location,
                 )
                 for s in target_stores
             ]
 
         if self._observations:
             # Construct stores from in-memory observations
-            seen_stores = {}
+            seen_stores: dict[str, Store] = {}
             for obs in self._observations:
                 sid = obs.store_id or f"store-{obs.store_name.lower().replace(' ', '-')}"
                 if sid not in seen_stores:
@@ -70,7 +107,10 @@ class UserContributedRetailerProvider(RetailerProvider):
                         slug=sid,
                         sort_order=len(seen_stores),
                     )
-            return list(seen_stores.values())
+            stores = list(seen_stores.values())
+            if self._zip_code:
+                return [s for s in stores if s.zip_code == self._zip_code and not s.is_unresolved_location]
+            return stores
 
         return []
 
@@ -79,10 +119,13 @@ class UserContributedRetailerProvider(RetailerProvider):
     ) -> list[ProductOffer]:
         """Return active offers from user observations for requested products and stores.
 
-        Conflict resolution: If multiple observations exist for the same
-        (store_id, product_id), the observation with the most recent
-        observation_date (and latest updated_at) is selected.
-        Stale observation handling: Observations older than 30 days are flagged with is_stale=True.
+        Data Quality & Conflict Resolution:
+        - Outdated observations: Flagged as is_stale when older than stale_days_threshold (default 30d).
+        - Promotional vs Regular: If both promotional and regular prices are recorded for the same date,
+          preserves both regular shelf price and promotional price.
+        - Multiple Contributors / Same-Date Conflicts: When multiple observations are recorded on the
+          same date with differing prices, computes a robust consensus median and adds conflict attribution,
+          rather than blindly assuming the latest DB write is verified.
         """
         if not product_ids or not store_ids:
             return []
@@ -114,56 +157,87 @@ class UserContributedRetailerProvider(RetailerProvider):
                 .all()
             )
 
-        # Conflict resolution: newest observation per (store_id, product_id)
-        latest_by_pair: dict[tuple[str, str], Any] = {}
+        # Group observations by (store_id, product_id)
+        grouped_by_pair: dict[tuple[str, str], list[Any]] = {}
         for obs in raw_observations:
             sid = obs.store_id or store_ids[0]
             key = (sid, obs.product_id)
-            if key not in latest_by_pair:
-                latest_by_pair[key] = obs
-            else:
-                # Compare observation date then updated_at
-                existing = latest_by_pair[key]
-                existing_date = existing.observation_date
-                obs_date = obs.observation_date
-                if obs_date > existing_date:
-                    latest_by_pair[key] = obs
-                elif obs_date == existing_date:
-                    existing_upd = getattr(existing, "updated_at", None)
-                    obs_upd = getattr(obs, "updated_at", None)
-                    if obs_upd and existing_upd and obs_upd > existing_upd:
-                        latest_by_pair[key] = obs
+            grouped_by_pair.setdefault(key, []).append(obs)
 
         offers: list[ProductOffer] = []
-        for (sid, pid), obs in latest_by_pair.items():
-            obs_date = obs.observation_date
-            if isinstance(obs_date, str):
-                obs_date_obj = datetime.strptime(obs_date, "%Y-%m-%d").date()
-                obs_date_str = obs_date
+        for (sid, pid), obs_list in grouped_by_pair.items():
+            # Find the latest observation date among observations for this pair
+            dates = [
+                obs.observation_date if isinstance(obs.observation_date, date)
+                else datetime.strptime(str(obs.observation_date), "%Y-%m-%d").date()
+                for obs in obs_list
+            ]
+            latest_date = max(dates)
+            latest_date_str = latest_date.isoformat()
+
+            # Filter to observations on the latest observation date
+            same_date_obs = [
+                obs for obs in obs_list
+                if (obs.observation_date if isinstance(obs.observation_date, date)
+                    else datetime.strptime(str(obs.observation_date), "%Y-%m-%d").date()) == latest_date
+            ]
+
+            # Separate promotional and regular submissions on that date
+            regular_obs = [o for o in same_date_obs if not getattr(o, "is_promotional", False)]
+            promo_obs = [o for o in same_date_obs if getattr(o, "is_promotional", False)]
+
+            conflict_attribution = ""
+            is_promotional_offer = False
+
+            if regular_obs and promo_obs:
+                regular_prices = [o.price_cents for o in regular_obs]
+                regular_cents = sorted(regular_prices)[len(regular_prices) // 2]
+                promo_prices = [o.price_cents for o in promo_obs]
+                promo_candidate = min(promo_prices)
+                if 0 < promo_candidate < regular_cents:
+                    promo_cents = promo_candidate
+                    is_promotional_offer = True
+                else:
+                    promo_cents = None
+                conflict_attribution = " (regular shelf and promo observed)"
+            elif promo_obs:
+                promo_prices = [o.price_cents for o in promo_obs]
+                promo_cents = sorted(promo_prices)[len(promo_prices) // 2]
+                regular_cents = promo_cents
+                is_promotional_offer = True
+                if len(promo_prices) > 1 and len(set(promo_prices)) > 1:
+                    conflict_attribution = f" (promo conflict resolved from {len(promo_prices)} reports)"
+                elif len(promo_prices) > 1:
+                    conflict_attribution = f" (verified promo by {len(promo_prices)} contributors)"
             else:
-                obs_date_obj = obs_date
-                obs_date_str = obs_date.isoformat()
+                regular_prices = [o.price_cents for o in regular_obs]
+                promo_cents = None
+                if len(regular_prices) > 1 and len(set(regular_prices)) > 1:
+                    regular_cents = sorted(regular_prices)[len(regular_prices) // 2]
+                    conflict_attribution = f" (conflict consensus from {len(regular_prices)} reports)"
+                else:
+                    regular_cents = regular_obs[0].price_cents
+                    if len(regular_prices) > 1:
+                        conflict_attribution = f" (verified by {len(regular_prices)} contributors)"
 
-            is_stale = (today - obs_date_obj).days > 30
-
-            regular_cents = obs.price_cents
-            promo_cents = obs.price_cents if getattr(obs, "is_promotional", False) else None
+            is_stale = (today - latest_date).days > self._stale_days_threshold
+            representative_obs = same_date_obs[0]
 
             offers.append(
                 ProductOffer(
-                    id=f"user-offer-{obs.id}",
+                    id=f"user-offer-{sid}-{pid}",
                     retailer_id=f"ret-{sid}",
                     store_id=sid,
                     product_id=pid,
-                    retailer_product_id=f"user-obs-{obs.id}",
+                    retailer_product_id=f"user-obs-{representative_obs.id}",
                     regular_price_cents=regular_cents,
                     promotional_price_cents=promo_cents,
                     is_available=True,
                     source=PriceSource.USER_CONTRIBUTED,
-                    observation_date=obs_date_str,
+                    observation_date=latest_date_str,
                     is_stale=is_stale,
-                    source_attribution=f"User-entered observation ({obs_date_str})",
-                    is_promotional=getattr(obs, "is_promotional", False),
+                    source_attribution=f"User-entered observation ({latest_date_str}{conflict_attribution})",
+                    is_promotional=is_promotional_offer,
                 )
             )
 

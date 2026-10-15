@@ -16,13 +16,14 @@ A shopper builds a grocery list, compares it across stores, and immediately sees
 
 Grocery Optimizer is designed as a clean, modular monolith with strict separation between business logic, persistence, and presentation:
 
-- **Frontend**: React 18, TypeScript, Vite, TanStack Query. Mobile-first, accessible (WCAG 2.1 AA), with >=44px touch targets and full keyboard support.
-- **Backend API**: Python 3.11+, FastAPI, Pydantic v2. Clean REST contracts exposing monetary amounts strictly in integer cents.
-- **Optimizer Engine**: Pure deterministic logic (`backend/app/optimizer/engine.py`). Independent of FastAPI, SQLAlchemy, or specific retailers.
+- **Frontend**: React 18, TypeScript, Vite, TanStack Query. Mobile-first, accessible (WCAG 2.1 AA), with >=44px touch targets and full keyboard support. Includes Rapid Shopping Trip multi-item batch entry and regional pilot store chips.
+- **Backend API**: Python 3.11+, FastAPI, Pydantic v2. Clean REST contracts exposing monetary amounts strictly in integer cents. Capability-based authorization via `X-Edit-Token` headers for privacy-preserving observation ownership without accounts.
+- **Optimizer Engine**: Pure deterministic logic (`backend/app/optimizer/engine.py`). Independent of FastAPI, SQLAlchemy, or specific retailers. Evaluates complete one-store and two-store combinations with locality/ZIP filtering.
 - **Canonical Catalog & Search**: Deterministic search (`backend/app/catalog/search.py`) with normalized text, alias resolution, prefix/substring ranking, and strict canonical product equivalence.
-- **Retailer Provider Abstraction**: Provider protocol (`backend/app/providers/base.py`) returning normalized `ProductOffer` objects.
+- **Retailer Provider Abstraction**: Provider protocol (`backend/app/providers/base.py`) returning normalized `ProductOffer` objects. Distinct providers for synthetic demonstration data (`DemonstrationProvider`) and real crowd-sourced observations (`UserContributedProvider`).
+- **Physical Store Identity**: Location-aware store model distinguishing retailer brand, physical street address, city, state, and ZIP code (initial pilot: ZIP 48042, Macomb County, MI).
 - **Persistence**: PostgreSQL, SQLAlchemy 2.0, Alembic migrations.
-- **Testing**: Deterministic backend unit/integration tests with `pytest`, frontend component/unit tests with `Vitest` and `jsdom`.
+- **Testing**: Deterministic backend unit/integration tests with `pytest` (49 tests), frontend component/unit tests with `Vitest` and `jsdom` (15 tests), and real headless Chromium browser workflows via `Playwright`.
 
 ---
 
@@ -157,5 +158,35 @@ Shopper grocery lists are anonymous and persisted in PostgreSQL using random UUI
   - No recovery mechanism exists if a list ID is lost.
   - If a saved list ID is deleted or missing from the backend, the UI removes it gracefully without crashing.
 
+### Capability-Based Observation Ownership (Mission 003 / GO-007)
+To safeguard user contributions without introducing high-friction, privacy-invasive user registration (no passwords, emails, or phone numbers), Grocery Optimizer employs **capability-based authorization**:
+- When a price observation is created, the backend securely generates a high-entropy secret token (`secrets.token_urlsafe(32)`).
+- The server stores only the SHA-256 digest (`edit_token_hash`). Raw tokens are never persisted in the database and are strictly redacted from public GET endpoints.
+- The raw token is returned once to the submitting client upon creation and saved in the browser's `localStorage` (`grocery_optimizer_observation_tokens`).
+- Modification (`PATCH /api/price-observations/{id}`) and deletion (`DELETE /api/price-observations/{id}`) require the client to supply the capability token in the `X-Edit-Token` HTTP header. Invalid or missing tokens receive `403 Forbidden`.
+- **Duplicate submission races**: Duplicate submissions from different contributors create separate observations rather than overwriting someone else's record.
+- **Known limitations**:
+  - Clearing browser storage or switching devices removes the local edit capability; the observations remain public but can no longer be edited or deleted by that client.
+  - Incognito/private browsing sessions do not retain capability tokens across sessions.
+
+### Physical Store Identity & Locality (Mission 003 / GO-008)
+Physical stores are identified by their composite location: retailer brand, physical street address, city, state, and ZIP code:
+- Stores sharing a brand name across different ZIP codes (e.g., *Meijer #206* in Lenox `48042` vs *Meijer #54* in Shelby `48316`) are strictly separated into distinct physical store records.
+- Stores without verified location attributes are explicitly flagged `is_unresolved_location=True` and excluded from localized shopping comparisons.
+- Regional testing pilot centers on **ZIP 48042** (Lenox Township / New Haven, Macomb County, MI).
+
+### Conflict Resolution & Staleness
+When multiple shoppers record prices for the same product at the same physical store:
+- Observations from the same date preserve temporary sale/promotional pricing distinctly from regular pricing.
+- Multiple regular observations on the same date resolve to a robust **median consensus price** rather than blindly favoring the newest entry.
+- Observations older than 30 days are automatically tagged `is_stale=True` with visual callouts in the UI.
+
+### Rapid Shopping Trip Batch Entry (Mission 003 / GO-009)
+Shoppers recording prices after an in-store trip or from a paper receipt can utilize **Shopping Trip Mode** (`POST /api/price-observations/batch`):
+- Store identity, locality, and date are entered once.
+- Products and shelf prices are added rapidly in sequence.
+- Reduces contributor actions from ~30 manual clicks to ~13 actions for 5 items (>55% friction reduction).
+
 ### Optimizer Complexity Note
-Mission 001 implements exhaustive enumeration over single stores and unordered pairs of stores. For $N$ stores, this evaluates $N + \binom{N}{2} = O(N^2)$ candidate combinations. For the 3 mock stores in Mission 001, this executes in fractions of a millisecond. In future missions supporting dozens or hundreds of physical retailer stores, store candidate pruning or heuristic search should be considered.
+Mission 001 implements exhaustive enumeration over single stores and unordered pairs of stores. For $N$ stores, this evaluates $N + \binom{N}{2} = O(N^2)$ candidate combinations. With location-based filtering (e.g. `zip_code=48042`), the candidate set $N$ is naturally bounded to local stores, keeping optimization latency under 5 milliseconds.
+

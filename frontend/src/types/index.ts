@@ -29,6 +29,11 @@ export interface StoreResponse {
   retailer_name: string;
   name: string;
   sort_order: number;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
+  is_unresolved_location?: boolean;
 }
 
 export interface PlanItemResponse {
@@ -60,6 +65,7 @@ export interface ComparisonResponse {
   pricing_source_label: string;
   is_demonstration: boolean;
   data_notice: string | null;
+  zip_code?: string | null;
 }
 
 export interface SavedListMetadata {
@@ -75,6 +81,10 @@ export interface PriceObservation {
   product_brand: string;
   store_id: string | null;
   store_name: string;
+  store_city?: string | null;
+  store_state?: string | null;
+  store_zip_code?: string | null;
+  is_unresolved_location?: boolean;
   price_cents: number;
   formatted_price: string;
   observation_date: string;
@@ -83,8 +93,35 @@ export interface PriceObservation {
   notes: string | null;
   source: string;
   source_attribution: string;
+  edit_token?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TripItemObservation {
+  product_id: string;
+  product_name?: string;
+  price_cents: number;
+  is_promotional?: boolean;
+  notes?: string | null;
+}
+
+export interface BatchPriceObservationRequest {
+  store_name: string;
+  store_id?: string | null;
+  retailer_name?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
+  observation_date: string;
+  items: TripItemObservation[];
+}
+
+export interface BatchPriceObservationResponse {
+  observations: PriceObservation[];
+  store: StoreResponse;
+  created_count: number;
 }
 
 export interface ProductPricesComparisonResponse {
@@ -95,4 +132,3 @@ export interface ProductPricesComparisonResponse {
   source: string;
   disclaimer: string;
 }
-
