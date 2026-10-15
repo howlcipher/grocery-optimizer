@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
+from app.api.rate_limiter import rate_limit_batch_observations, rate_limit_observations
 from app.api.schemas import (
     BatchPriceObservationCreateRequest,
     BatchPriceObservationResponse,
@@ -59,7 +60,7 @@ def health_check():
 @router.get("/products", response_model=list[ProductResponse], tags=["catalog"])
 def get_products(
     q: str | None = Query(default="", description="Search query"),
-    limit: int = Query(default=10, ge=1, le=50, description="Max results"),
+    limit: int = Query(default=10, ge=1, le=200, description="Max results"),
     db: Session = Depends(get_db),
 ):
     """Search canonical catalog products deterministically."""
@@ -352,6 +353,8 @@ def _resolve_or_create_store(
     city: str | None = None,
     state: str | None = None,
     zip_code: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> StoreModel:
     """Resolve an existing physical store or create a new store with physical locality."""
     # 1. Direct store_id lookup
@@ -391,21 +394,24 @@ def _resolve_or_create_store(
         db.add(retailer)
         db.flush()
 
-    # 2. Location-aware matching if ZIP is present
-    if cleaned_zip:
+    # 2. Location-aware matching when verified street address is present
+    if cleaned_address:
         query = db.query(StoreModel).filter(
             StoreModel.retailer_id == retailer.id,
-            StoreModel.zip_code == cleaned_zip,
             StoreModel.is_unresolved_location.is_(False),
+            func.lower(StoreModel.address) == cleaned_address.lower(),
         )
-        if cleaned_address:
-            query = query.filter(func.lower(StoreModel.address) == cleaned_address.lower())
+        if cleaned_zip:
+            query = query.filter(StoreModel.zip_code == cleaned_zip)
         store = query.first()
         if store:
+            if latitude is not None and store.latitude is None:
+                store.latitude = latitude
+                store.longitude = longitude
             return store
 
-        # Create distinct physical store for this locality
-        store_slug = f"{retailer_slug}-{cleaned_zip}-{uuid.uuid4().hex[:4]}"
+        # Create distinct physical store for this verified address
+        store_slug = f"{retailer_slug}-{cleaned_zip or 'loc'}-{uuid.uuid4().hex[:4]}"
         store = StoreModel(
             id=f"store-{store_slug}",
             retailer_id=retailer.id,
@@ -415,6 +421,8 @@ def _resolve_or_create_store(
             city=cleaned_city,
             state=cleaned_state,
             zip_code=cleaned_zip,
+            latitude=latitude,
+            longitude=longitude,
             is_unresolved_location=False,
             sort_order=100,
         )
@@ -422,29 +430,40 @@ def _resolve_or_create_store(
         db.flush()
         return store
 
-    # 3. Unresolved fallback: Match existing unresolved store with exact name under this retailer
-    store = (
-        db.query(StoreModel)
-        .filter(
-            StoreModel.retailer_id == retailer.id,
-            func.lower(StoreModel.name) == cleaned_store_name.lower(),
-            StoreModel.is_unresolved_location.is_(True),
-        )
-        .first()
+    # 3. Address is missing:
+    # A store without a street address cannot be uniquely verified as a distinct physical building.
+    # To prevent same-ZIP collisions (Gate 0 Problem A):
+    # - It must NEVER match a store that has a known street address.
+    # - ZIP alone does not identify a store; stores with different names in the same ZIP remain distinct.
+    # - Only match an existing unresolved store with the exact same retailer, name, and ZIP.
+    query = db.query(StoreModel).filter(
+        StoreModel.retailer_id == retailer.id,
+        StoreModel.address.is_(None),
+        StoreModel.is_unresolved_location.is_(True),
+        func.lower(StoreModel.name) == cleaned_store_name.lower(),
     )
+    if cleaned_zip:
+        query = query.filter(StoreModel.zip_code == cleaned_zip)
+    else:
+        query = query.filter(StoreModel.zip_code.is_(None))
+
+    store = query.first()
     if store:
         return store
 
+    # Create distinct unresolved store preserving supplied city/state/ZIP without claiming verified location
     store_slug = f"{retailer_slug}-unresolved-{uuid.uuid4().hex[:6]}"
     store = StoreModel(
         id=f"store-{store_slug}",
         retailer_id=retailer.id,
         name=cleaned_store_name,
         slug=store_slug,
-        address=cleaned_address,
+        address=None,
         city=cleaned_city,
         state=cleaned_state,
-        zip_code=None,
+        zip_code=cleaned_zip,
+        latitude=None,
+        longitude=None,
         is_unresolved_location=True,
         sort_order=100,
     )
@@ -527,6 +546,8 @@ def get_stores(
             city=s.city,
             state=s.state,
             zip_code=s.zip_code,
+            latitude=s.latitude,
+            longitude=s.longitude,
             is_unresolved_location=s.is_unresolved_location,
         )
         for s in stores
@@ -548,6 +569,10 @@ def compare_prices_for_list(
         default=None,
         description="Optional ZIP code to restrict store comparisons to local physical stores (e.g. 48042)",
     ),
+    region_scope: str = Query(
+        default="exact",
+        description="Scope for ZIP comparison: 'exact' (only specified ZIP) or 'neighborhood' (includes nearby pilot stores)",
+    ),
     db: Session = Depends(get_db),
     provider: RetailerProvider = Depends(get_retailer_provider),
 ):
@@ -555,7 +580,7 @@ def compare_prices_for_list(
 
     Guarantees strict separation between demonstration sample data and user observations.
     Never mixes incompatible sources into a claimed savings figure.
-    Supports physical store geographic filtering by ZIP code.
+    Supports physical store geographic filtering by ZIP code and regional pilot neighborhoods.
     """
     grocery_list = (
         db.query(GroceryListModel)
@@ -576,16 +601,29 @@ def compare_prices_for_list(
         )
 
     # Determine provider based on requested source
+    compared_zips: list[str] = []
     if source == "user_contributed":
-        active_provider: RetailerProvider = UserContributedRetailerProvider(db=db, zip_code=zip_code)
+        active_provider: RetailerProvider = UserContributedRetailerProvider(
+            db=db,
+            zip_code=zip_code,
+            region_scope=region_scope,
+        )
         is_demo = False
         pricing_source = "user_contributed"
         pricing_label = "User-Entered Observations"
         if zip_code:
-            notice = (
-                f"Prices are consumer-entered observations filtered to ZIP {zip_code}. "
-                "Only physical stores located in this area are included."
-            )
+            target_zips = getattr(active_provider, "target_zips", {zip_code})
+            compared_zips = sorted(target_zips)
+            if region_scope in ("neighborhood", "regional") and len(compared_zips) > 1:
+                notice = (
+                    f"Prices are consumer-entered observations for {zip_code} and nearby pilot neighborhood stores "
+                    f"({', '.join(compared_zips)}). Only physical stores located in these areas are included."
+                )
+            else:
+                notice = (
+                    f"Prices are consumer-entered observations filtered to ZIP {zip_code}. "
+                    "Only physical stores located in this area are included."
+                )
         else:
             notice = (
                 "Prices are consumer-entered observations. Missing observation data does not mean "
@@ -651,6 +689,8 @@ def compare_prices_for_list(
                 city=getattr(s, "city", None),
                 state=getattr(s, "state", None),
                 zip_code=getattr(s, "zip_code", None),
+                latitude=getattr(s, "latitude", None),
+                longitude=getattr(s, "longitude", None),
                 is_unresolved_location=getattr(s, "is_unresolved_location", False),
             )
             for s in plan.stores
@@ -699,6 +739,8 @@ def compare_prices_for_list(
         is_demonstration=is_demo,
         data_notice=notice,
         zip_code=zip_code,
+        region_scope=region_scope,
+        compared_zip_codes=compared_zips,
     )
 
 
@@ -748,6 +790,7 @@ def get_price_observations(
     "/price-observations",
     response_model=PriceObservationResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit_observations)],
     tags=["observations"],
 )
 def create_price_observation(
@@ -802,6 +845,8 @@ def create_price_observation(
         city=body.city,
         state=body.state,
         zip_code=body.zip_code,
+        latitude=body.latitude,
+        longitude=body.longitude,
     )
 
     # Duplicate / correction check:
@@ -853,6 +898,7 @@ def create_price_observation(
     "/price-observations/batch",
     response_model=BatchPriceObservationResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit_batch_observations)],
     tags=["observations"],
 )
 def create_batch_price_observations(
@@ -861,7 +907,7 @@ def create_batch_price_observations(
     db: Session = Depends(get_db),
 ):
     """Rapidly record multiple product prices observed during a single shopping trip."""
-    # Validate observation date
+    # 1. Validate observation date
     try:
         obs_date = datetime.strptime(body.observation_date, "%Y-%m-%d").date()
     except ValueError:
@@ -882,45 +928,74 @@ def create_batch_price_observations(
             detail="Observation date cannot be older than one year.",
         )
 
-    store = _resolve_or_create_store(
-        db=db,
-        store_name=body.store_name,
-        store_id=body.store_id,
-        retailer_name=body.retailer_name,
-        address=body.address,
-        city=body.city,
-        state=body.state,
-        zip_code=body.zip_code,
-    )
+    # 2. Check for duplicate products within the batch
+    product_ids = [item.product_id for item in body.items]
+    if len(product_ids) != len(set(product_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Batch request contains duplicate entries for the same product.",
+        )
 
-    created_obs_responses: list[PriceObservationResponse] = []
+    # 3. Upfront validation of price bounds and canonical product existence
     for item in body.items:
-        product = db.query(ProductModel).filter(ProductModel.id == item.product_id).first()
-        if not product:
-            continue
-
         if item.price_cents <= 0 or item.price_cents > 50000:
-            continue
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid price {item.price_cents} cents. Price must be between $0.01 and $500.00.",
+            )
 
-        raw_token, token_hash = _generate_edit_token()
-        new_obs = PriceObservationModel(
-            id=str(uuid.uuid4()),
-            product_id=item.product_id,
-            store_id=store.id,
-            store_name=store.name,
-            price_cents=item.price_cents,
-            observation_date=obs_date,
-            is_promotional=item.is_promotional,
-            notes=item.notes,
-            edit_token_hash=token_hash,
-        )
-        db.add(new_obs)
-        db.flush()
-        created_obs_responses.append(
-            _to_observation_response(new_obs, product, store, edit_token=raw_token)
+    existing_products = {
+        p.id: p
+        for p in db.query(ProductModel).filter(ProductModel.id.in_(product_ids)).all()
+    }
+    for item in body.items:
+        if item.product_id not in existing_products:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product not found in canonical catalog: {item.product_id}",
+            )
+
+    # 4. Resolve or create store with atomic transaction
+    try:
+        store = _resolve_or_create_store(
+            db=db,
+            store_name=body.store_name,
+            store_id=body.store_id,
+            retailer_name=body.retailer_name,
+            address=body.address,
+            city=body.city,
+            state=body.state,
+            zip_code=body.zip_code,
+            latitude=body.latitude,
+            longitude=body.longitude,
         )
 
-    db.commit()
+        created_obs_responses: list[PriceObservationResponse] = []
+        for item in body.items:
+            product = existing_products[item.product_id]
+            raw_token, token_hash = _generate_edit_token()
+            new_obs = PriceObservationModel(
+                id=str(uuid.uuid4()),
+                product_id=item.product_id,
+                store_id=store.id,
+                store_name=store.name,
+                price_cents=item.price_cents,
+                observation_date=obs_date,
+                is_promotional=item.is_promotional,
+                notes=item.notes,
+                edit_token_hash=token_hash,
+            )
+            db.add(new_obs)
+            db.flush()
+            created_obs_responses.append(
+                _to_observation_response(new_obs, product, store, edit_token=raw_token)
+            )
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
     retailer = store.retailer if store.retailer else db.query(RetailerModel).filter_by(id=store.retailer_id).first()
     store_resp = StoreResponse(
         id=store.id,
@@ -931,6 +1006,8 @@ def create_batch_price_observations(
         city=store.city,
         state=store.state,
         zip_code=store.zip_code,
+        latitude=store.latitude,
+        longitude=store.longitude,
         is_unresolved_location=store.is_unresolved_location,
     )
     return BatchPriceObservationResponse(
@@ -1003,8 +1080,63 @@ def update_price_observation(
             )
         obs.observation_date = obs_date
 
-    if body.store_name is not None and body.store_name.strip():
-        store = _resolve_or_create_store(db=db, store_name=body.store_name)
+    # Store resolution / correction (Problem B fix: preserve existing locality unless explicitly overridden)
+    if body.store_id is not None:
+        target_store = db.query(StoreModel).filter(StoreModel.id == body.store_id).first()
+        if not target_store:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Store with id '{body.store_id}' not found",
+            )
+        obs.store_id = target_store.id
+        obs.store_name = target_store.name
+    elif body.store_name is not None and body.store_name.strip():
+        current_store = obs.store
+        effective_address = body.address if body.address is not None else (current_store.address if current_store else None)
+        effective_city = body.city if body.city is not None else (current_store.city if current_store else None)
+        effective_state = body.state if body.state is not None else (current_store.state if current_store else None)
+        effective_zip = body.zip_code if body.zip_code is not None else (current_store.zip_code if current_store else None)
+        effective_retailer = body.retailer_name if body.retailer_name is not None else (
+            current_store.retailer.name if current_store and current_store.retailer else None
+        )
+        effective_lat = body.latitude if body.latitude is not None else (current_store.latitude if current_store else None)
+        effective_lon = body.longitude if body.longitude is not None else (current_store.longitude if current_store else None)
+        store = _resolve_or_create_store(
+            db=db,
+            store_name=body.store_name,
+            retailer_name=effective_retailer,
+            address=effective_address,
+            city=effective_city,
+            state=effective_state,
+            zip_code=effective_zip,
+            latitude=effective_lat,
+            longitude=effective_lon,
+        )
+        obs.store_id = store.id
+        obs.store_name = store.name
+    elif any(v is not None for v in (body.address, body.city, body.state, body.zip_code, body.latitude, body.longitude)):
+        current_store = obs.store
+        base_name = current_store.name if current_store else "Store"
+        effective_address = body.address if body.address is not None else (current_store.address if current_store else None)
+        effective_city = body.city if body.city is not None else (current_store.city if current_store else None)
+        effective_state = body.state if body.state is not None else (current_store.state if current_store else None)
+        effective_zip = body.zip_code if body.zip_code is not None else (current_store.zip_code if current_store else None)
+        effective_retailer = body.retailer_name if body.retailer_name is not None else (
+            current_store.retailer.name if current_store and current_store.retailer else None
+        )
+        effective_lat = body.latitude if body.latitude is not None else (current_store.latitude if current_store else None)
+        effective_lon = body.longitude if body.longitude is not None else (current_store.longitude if current_store else None)
+        store = _resolve_or_create_store(
+            db=db,
+            store_name=base_name,
+            retailer_name=effective_retailer,
+            address=effective_address,
+            city=effective_city,
+            state=effective_state,
+            zip_code=effective_zip,
+            latitude=effective_lat,
+            longitude=effective_lon,
+        )
         obs.store_id = store.id
         obs.store_name = store.name
 

@@ -7,6 +7,17 @@ import {
   saveRecentStore,
 } from "../lib/storage";
 import { formatCents } from "../lib/money";
+import { recognizeReceiptText } from "../lib/ocrService";
+import { parseReceiptText } from "../lib/receiptParser";
+
+export interface EnhancedTripItem extends TripItemObservation {
+  product_name: string;
+  brand: string;
+  confidence?: "high" | "medium" | "unmatched";
+  rawText?: string;
+  candidateProducts?: Product[];
+  isEditingProduct?: boolean;
+}
 
 interface RecordPriceModalProps {
   isOpen: boolean;
@@ -65,15 +76,20 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
   const [notes, setNotes] = useState(initialNotes);
 
   // Trip multi-item state
-  const [tripItems, setTripItems] = useState<
-    (TripItemObservation & { product_name: string; brand: string })[]
-  >([]);
+  const [tripItems, setTripItems] = useState<EnhancedTripItem[]>([]);
   const [tripProduct, setTripProduct] = useState<Product | null>(null);
   const [tripSearchQuery, setTripSearchQuery] = useState("");
   const [tripSuggestions, setTripSuggestions] = useState<Product[]>([]);
   const [tripPriceInput, setTripPriceInput] = useState("");
   const [tripPromotional, setTripPromotional] = useState(false);
   const [tripItemNotes, setTripItemNotes] = useState("");
+
+  // Receipt OCR Assistant State
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
+  const [isScanningReceipt, setIsScanningReceipt] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState("");
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [scanSummary, setScanSummary] = useState<string | null>(null);
 
   const [recentStores, setRecentStores] = useState<StoreResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +123,9 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
       setEntryMode(editingObservationId ? "single" : "single");
       setTripItems([]);
       setError(null);
+      setScanSummary(null);
+      setIsScanningReceipt(false);
+      api.getProducts(100).then(setCatalogProducts).catch(() => {});
     }
   }, [isOpen, initialProduct, initialStoreName, initialPriceCents, initialDate, initialNotes, initialPromotional, editingObservationId]);
 
@@ -188,6 +207,7 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
         price_cents: priceCents,
         is_promotional: tripPromotional,
         notes: tripItemNotes.trim() || null,
+        confidence: "high",
       },
     ]);
 
@@ -197,6 +217,113 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
     setTripPriceInput("");
     setTripPromotional(false);
     setTripItemNotes("");
+  };
+
+  const handleReceiptFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    e.target.value = "";
+    setIsScanningReceipt(true);
+    setOcrStatus("Preprocessing receipt photo...");
+    setOcrProgress(0.1);
+    setError(null);
+    setScanSummary(null);
+
+    try {
+      let products = catalogProducts;
+      if (products.length === 0) {
+        products = await api.getProducts(100);
+        setCatalogProducts(products);
+      }
+
+      const ocrText = await recognizeReceiptText(file, (p) => {
+        setOcrStatus(p.status);
+        setOcrProgress(p.progress);
+      });
+
+      const parsed = parseReceiptText(ocrText, products);
+
+      if (parsed.storeName && !storeName) {
+        setStoreName(parsed.storeName);
+        setRetailerName(parsed.storeName);
+      }
+      if (parsed.zipCode && !storeZip) {
+        setStoreZip(parsed.zipCode);
+      }
+      if (parsed.address && !storeCity) {
+        setStoreCity(parsed.address);
+      }
+      if (parsed.date) {
+        setObservationDate(parsed.date);
+      }
+
+      if (parsed.items.length === 0) {
+        setError("No grocery items or prices could be recognized on this receipt. You can add items manually below.");
+      } else {
+        const newTripItems: EnhancedTripItem[] = parsed.items.map((item) => {
+          const matchedProd = products.find((p) => p.id === item.matchedProductId);
+          return {
+            product_id: item.matchedProductId || "",
+            product_name: matchedProd ? matchedProd.name : item.rawText,
+            brand: matchedProd ? matchedProd.brand : "Review Needed",
+            price_cents: item.priceCents,
+            is_promotional: item.isPromotional || false,
+            notes: null,
+            confidence: item.matchConfidence,
+            rawText: item.rawText,
+            candidateProducts: item.candidateProducts || [],
+          };
+        });
+
+        setTripItems((prev) => [...prev, ...newTripItems]);
+        setScanSummary(
+          `Extracted ${parsed.items.length} items from receipt. (${parsed.ignoredLines.length} deposit/tax/noise lines excluded). Review your items below before saving.`
+        );
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to scan receipt");
+    } finally {
+      setIsScanningReceipt(false);
+      setOcrStatus("");
+      setOcrProgress(0);
+    }
+  };
+
+  const handleUpdateTripItemProduct = (index: number, newProd: Product) => {
+    setTripItems((prev) =>
+      prev.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              product_id: newProd.id,
+              product_name: newProd.name,
+              brand: newProd.brand,
+              confidence: "high",
+              isEditingProduct: false,
+            }
+          : item
+      )
+    );
+  };
+
+  const handleUpdateTripItemPrice = (index: number, newPriceInput: string) => {
+    const val = parseFloat(newPriceInput);
+    if (!isNaN(val) && val >= 0) {
+      setTripItems((prev) =>
+        prev.map((item, i) =>
+          i === index ? { ...item, price_cents: Math.round(val * 100) } : item
+        )
+      );
+    }
+  };
+
+  const handleToggleTripItemPromo = (index: number) => {
+    setTripItems((prev) =>
+      prev.map((item, i) =>
+        i === index ? { ...item, is_promotional: !item.is_promotional } : item
+      )
+    );
   };
 
   const handleRemoveTripItem = (index: number) => {
@@ -283,6 +410,37 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
 
     if (tripItems.length === 0) {
       setError("Please add at least one item to this shopping trip.");
+      return;
+    }
+
+    // Upfront validation: all items must have a valid selected canonical product
+    const unmatchedIndex = tripItems.findIndex((it) => !it.product_id);
+    if (unmatchedIndex !== -1) {
+      setError(
+        `Item "${tripItems[unmatchedIndex].rawText || tripItems[unmatchedIndex].product_name}" is unmatched. Please select a matching product from the catalog or remove it before saving.`
+      );
+      return;
+    }
+
+    // Upfront validation: price bounds
+    const invalidPriceItem = tripItems.find(
+      (it) => isNaN(it.price_cents) || it.price_cents <= 0 || it.price_cents > 50000
+    );
+    if (invalidPriceItem) {
+      setError(`Item "${invalidPriceItem.product_name}" has an invalid price. Price must be between $0.01 and $500.00.`);
+      return;
+    }
+
+    // Check for duplicate products in trip
+    const productIds = tripItems.map((it) => it.product_id);
+    if (new Set(productIds).size !== productIds.length) {
+      setError("This shopping trip contains duplicate items for the same product. Please remove or combine duplicates before saving.");
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    if (observationDate > todayStr) {
+      setError("Observation date cannot be in the future.");
       return;
     }
 
@@ -653,10 +811,69 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
         {/* --- Shopping Trip Multi-Item Mode --- */}
         {entryMode === "trip" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {/* Rapid Add Row */}
+            {/* Private Receipt Scanner Card */}
+            <div className="receipt-scan-card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 800, fontSize: "0.95rem", color: "#065f46" }}>
+                      📷 Private Receipt Assistant
+                    </span>
+                    <span style={{ fontSize: "0.7rem", fontWeight: 700, background: "#dcfce7", color: "#166534", padding: "1px 6px", borderRadius: 4 }}>
+                      Zero Cloud Uploads
+                    </span>
+                  </div>
+                  <p style={{ margin: "4px 0 0", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                    Photograph or upload a receipt. Items and prices are recognized locally in your browser.
+                  </p>
+                </div>
+
+                <label
+                  className="btn btn-primary touch-target"
+                  style={{ minHeight: 36, padding: "0 14px", fontSize: "0.85rem", cursor: isScanningReceipt ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <span>{isScanningReceipt ? "Scanning..." : "📷 Scan Receipt Photo"}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    style={{ display: "none" }}
+                    disabled={isScanningReceipt}
+                    onChange={handleReceiptFileSelected}
+                  />
+                </label>
+              </div>
+
+              {isScanningReceipt && (
+                <div style={{ marginTop: 10, background: "#ffffff", padding: "10px 12px", borderRadius: 6, border: "1px solid #bfdbfe" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", fontWeight: 600, color: "#1e40af", marginBottom: 4 }}>
+                    <span>{ocrStatus}</span>
+                    <span>{Math.round(ocrProgress * 100)}%</span>
+                  </div>
+                  <div style={{ height: 6, background: "#e2e8f0", borderRadius: 3, overflow: "hidden" }}>
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${Math.round(ocrProgress * 100)}%`,
+                        backgroundColor: "var(--color-primary)",
+                        transition: "width 0.2s ease",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {scanSummary && !isScanningReceipt && (
+                <div style={{ marginTop: 10, fontSize: "0.8rem", background: "#f0fdf4", color: "#15803d", padding: "8px 10px", borderRadius: 6, border: "1px solid #bbf7d0" }}>
+                  ✓ {scanSummary}
+                </div>
+              )}
+            </div>
+
+            {/* Manual Rapid Add Row */}
             <div style={{ backgroundColor: "#eff6ff", padding: "12px", borderRadius: 8, border: "1px solid #bfdbfe" }}>
               <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "#1e40af", marginBottom: 6 }}>
-                ADD TRIP ITEM
+                ADD ITEM MANUALLY
               </div>
 
               {tripProduct ? (
@@ -742,7 +959,7 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
               </div>
             </div>
 
-            {/* Trip Items List */}
+            {/* Trip Items Review Staging List */}
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>
@@ -757,38 +974,126 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
 
               {tripItems.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "20px 0", color: "var(--color-text-muted)", fontSize: "0.9rem", border: "1px dashed #cbd5e1", borderRadius: 8 }}>
-                  No items added yet. Search a product and enter its price above to build your trip observations.
+                  No items added yet. Scan a receipt photo above or search products to build your trip observations.
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 300, overflowY: "auto" }}>
                   {tripItems.map((item, idx) => (
                     <div
-                      key={`${item.product_id}-${idx}`}
-                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#f8fafc", borderRadius: 6 }}
+                      key={`${item.product_id || item.rawText}-${idx}`}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                        padding: "10px 12px",
+                        background: item.confidence === "unmatched" ? "#fef2f2" : "#f8fafc",
+                        border: item.confidence === "unmatched" ? "1px solid #fecaca" : "1px solid #e2e8f0",
+                        borderRadius: 6,
+                      }}
                     >
-                      <div>
-                        <strong>{item.product_name}</strong>
-                        <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginLeft: 6 }}>
-                          ({item.brand})
-                        </span>
-                        {item.is_promotional && (
-                          <span className="sale-pill" style={{ marginLeft: 6, fontSize: "0.75rem" }}>
-                            Sale
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          {item.confidence === "high" && (
+                            <span className="confidence-pill confidence-high">✓ Matched</span>
+                          )}
+                          {item.confidence === "medium" && (
+                            <span className="confidence-pill confidence-medium">⚠️ Review Match</span>
+                          )}
+                          {item.confidence === "unmatched" && (
+                            <span className="confidence-pill confidence-unmatched">❓ Unmatched</span>
+                          )}
+
+                          <strong>{item.product_name}</strong>
+                          <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                            ({item.brand})
                           </span>
-                        )}
+                        </div>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <button
+                            type="button"
+                            className="link-button"
+                            style={{ fontSize: "0.8rem", color: "var(--color-primary)" }}
+                            onClick={() => {
+                              setTripItems((prev) =>
+                                prev.map((it, i) =>
+                                  i === idx ? { ...it, isEditingProduct: !it.isEditingProduct } : it
+                                )
+                              );
+                            }}
+                          >
+                            {item.isEditingProduct ? "Done" : item.product_id ? "Change" : "Select Product"}
+                          </button>
+
+                          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.8rem", cursor: "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={item.is_promotional || false}
+                              onChange={() => handleToggleTripItemPromo(idx)}
+                              style={{ width: 16, height: 16 }}
+                            />
+                            Sale
+                          </label>
+
+                          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                            <span style={{ fontSize: "0.85rem" }}>$</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              max="500.00"
+                              className="search-input"
+                              style={{ width: 75, height: 30, fontSize: "0.85rem", padding: "0 6px" }}
+                              value={(item.price_cents / 100).toFixed(2)}
+                              onChange={(e) => handleUpdateTripItemPrice(idx, e.target.value)}
+                            />
+                          </div>
+
+                          <button
+                            type="button"
+                            className="link-button touch-target"
+                            style={{ color: "#ef4444", fontSize: "0.9rem", padding: "2px 6px" }}
+                            onClick={() => handleRemoveTripItem(idx)}
+                            aria-label={`Remove ${item.product_name} from trip`}
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontWeight: 700 }}>{formatCents(item.price_cents)}</span>
-                        <button
-                          type="button"
-                          className="link-button touch-target"
-                          style={{ color: "#ef4444", fontSize: "0.85rem", padding: "2px 6px" }}
-                          onClick={() => handleRemoveTripItem(idx)}
-                          aria-label={`Remove ${item.product_name} from trip`}
-                        >
-                          ✕
-                        </button>
-                      </div>
+
+                      {item.rawText && (
+                        <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                          Receipt line: <em>"{item.rawText}"</em>
+                        </div>
+                      )}
+
+                      {/* Inline Product Selector when editing or unmatched */}
+                      {(item.isEditingProduct || item.confidence === "unmatched") && (
+                        <div style={{ marginTop: 4, background: "#ffffff", padding: "8px 10px", borderRadius: 6, border: "1px solid #cbd5e1" }}>
+                          <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 4 }}>
+                            Select canonical product from catalog:
+                          </div>
+                          <select
+                            className="search-input"
+                            style={{ width: "100%", height: 32, fontSize: "0.85rem" }}
+                            value={item.product_id || ""}
+                            onChange={(e) => {
+                              const chosen = catalogProducts.find((p) => p.id === e.target.value);
+                              if (chosen) handleUpdateTripItemProduct(idx, chosen);
+                            }}
+                          >
+                            <option value="" disabled>-- Choose matching product --</option>
+                            {(item.candidateProducts && item.candidateProducts.length > 0
+                              ? item.candidateProducts
+                              : catalogProducts
+                            ).map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} ({p.brand} • {p.package_quantity} {p.package_unit})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

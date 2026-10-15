@@ -10,6 +10,15 @@ if TYPE_CHECKING:
     from app.persistence.models import PriceObservationModel
 
 
+PILOT_NEIGHBORHOOD_MAP: dict[str, set[str]] = {
+    "48042": {"48042", "48051", "48315"},  # Lenox / New Haven / Macomb North
+    "48051": {"48051", "48042", "48315"},  # Chesterfield / New Baltimore
+    "48315": {"48315", "48316", "48042", "48051", "48307"},  # Shelby Twp North / Macomb
+    "48316": {"48316", "48315", "48307"},  # Shelby Twp South / Utica
+    "48307": {"48307", "48316", "48315"},  # Rochester / Rochester Hills
+}
+
+
 class UserContributedRetailerProvider(RetailerProvider):
     """Retailer provider that supplies offers from verified user-contributed
 
@@ -22,33 +31,43 @@ class UserContributedRetailerProvider(RetailerProvider):
         observations: "list[PriceObservationModel] | None" = None,
         stores: list[Store] | None = None,
         zip_code: str | None = None,
+        region_scope: str = "exact",
         stale_days_threshold: int = 30,
     ):
         self._db = db
         self._observations = observations
         self._stores = stores
         self._zip_code = zip_code.strip() if zip_code and zip_code.strip() else None
+        self._region_scope = region_scope
         self._stale_days_threshold = stale_days_threshold
+
+        if self._zip_code:
+            if region_scope in ("neighborhood", "regional"):
+                self.target_zips: set[str] = PILOT_NEIGHBORHOOD_MAP.get(self._zip_code, {self._zip_code})
+            else:
+                self.target_zips = {self._zip_code}
+        else:
+            self.target_zips = set()
 
     def get_stores(self) -> list[Store]:
         """Return stores for which price observations or definitions exist,
 
-        optionally filtered by geographic ZIP code.
+        optionally filtered by geographic ZIP code or neighborhood pilot region.
         """
         if self._stores is not None:
             stores = list(self._stores)
-            if self._zip_code:
-                return [s for s in stores if s.zip_code == self._zip_code and not s.is_unresolved_location]
+            if self.target_zips:
+                return [s for s in stores if s.zip_code in self.target_zips and not s.is_unresolved_location]
             return stores
 
         if self._db is not None:
             from app.persistence.models import PriceObservationModel, StoreModel
 
             query = self._db.query(StoreModel)
-            if self._zip_code:
-                # Strictly filter to physical stores located in the specified ZIP
+            if self.target_zips:
+                # Strictly filter to physical stores located in the specified ZIP(s)
                 query = query.filter(
-                    StoreModel.zip_code == self._zip_code,
+                    StoreModel.zip_code.in_(self.target_zips),
                     StoreModel.is_unresolved_location.is_(False),
                 )
                 return [
@@ -62,6 +81,8 @@ class UserContributedRetailerProvider(RetailerProvider):
                         city=s.city,
                         state=s.state,
                         zip_code=s.zip_code,
+                        latitude=s.latitude,
+                        longitude=s.longitude,
                         is_unresolved_location=s.is_unresolved_location,
                     )
                     for s in query.all()
@@ -89,6 +110,8 @@ class UserContributedRetailerProvider(RetailerProvider):
                     city=s.city,
                     state=s.state,
                     zip_code=s.zip_code,
+                    latitude=s.latitude,
+                    longitude=s.longitude,
                     is_unresolved_location=s.is_unresolved_location,
                 )
                 for s in target_stores
@@ -108,8 +131,8 @@ class UserContributedRetailerProvider(RetailerProvider):
                         sort_order=len(seen_stores),
                     )
             stores = list(seen_stores.values())
-            if self._zip_code:
-                return [s for s in stores if s.zip_code == self._zip_code and not s.is_unresolved_location]
+            if self.target_zips:
+                return [s for s in stores if s.zip_code in self.target_zips and not s.is_unresolved_location]
             return stores
 
         return []

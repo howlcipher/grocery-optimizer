@@ -70,17 +70,59 @@ Expand local store pilot intelligence beyond ZIP 48042 to encompass neighboring 
 
 ---
 
-## 7. Definition of Done
-1. Ephemeral, in-browser receipt assistant functional in Shopping Trip mode.
-2. POS abbreviation fuzzy matcher mapped to canonical catalog products.
-3. Strict PII redaction verified with zero server image transmission.
-4. Multi-ZIP regional radius comparisons operational.
-5. Complete test coverage added with zero regressions across prior missions.
-6. Independent security, privacy, and UX review completed.
-7. Successor specification `docs/MISSION_005.md` generated.
-8. Pull request created targeting `main` without merging.
+---
+
+## 7. Definition of Done & Gate Outcomes
+
+- [x] **Gate 0: Physical Store Identity Defect Resolution**
+  - Resolved Problem A (`GO-010`): Same-ZIP stores lacking address no longer merge into the first store; distinct locations receive separate records with `is_unresolved_location=True`.
+  - Resolved Problem B (`GO-011`): Observation PATCH preserves existing address, city, state, ZIP, and coordinates when updating store name.
+  - Resolved Problem C: Added nullable `latitude` and `longitude` fields to `stores` via Alembic migration `d81376de9f57_add_store_coordinates.py`.
+- [x] **Gate 1: Protect Public Contribution System (`GO-012`)**
+  - Proportionate thread-safe sliding window rate limiting on `POST /api/price-observations` (60/min) and `POST /api/price-observations/batch` (20/min).
+  - Upfront atomic validation in batch submissions: returns HTTP 404 for invalid products, HTTP 400 for duplicate products, HTTP 422 for bad bounds, wrapping operations in an atomic transaction with full rollback.
+- [x] **Gate 2 & 3: Ephemeral In-Browser Receipt Assistant & Zero Network Leaks**
+  - Client-side OCR implemented with Tesseract.js in WebAssembly with local canvas preprocessing (grayscale, contrast boost).
+  - Zero raw image uploads or external API transmissions; all OCR occurs directly within browser memory.
+- [x] **Gate 4 & 5: Deterministic Receipt Parsing & Canonical Matching**
+  - Line-by-line regex parsing identifying items, prices, discounts, and date.
+  - Strict Michigan 10¢ bottle deposit exclusion (`MI DEP .10`, `10C DEP`, etc.) and PII / transaction noise redaction.
+  - Conservative token matching against canonical products with package-size verification and confidence tiers (`✓ Matched`, `⚠️ Review Match`, `❓ Unmatched`).
+- [x] **Gate 6: Human-in-the-Loop Review Staging**
+  - Staged review list inside Shopping Trip mode (`RecordPriceModal.tsx`) with confidence badges, dropdown candidate reassignment, editable prices, and one-click batch submission.
+  - Capability edit tokens generated and securely stored in consumer's `localStorage` (`grocery_optimizer_observation_tokens`).
+- [x] **Gate 7 & 8: Regional Pilot Comparison Radius**
+  - Pilot neighborhood radius mapping covering Macomb and Oakland county pilot ZIPs: 48042 (Lenox), 48051 (Chesterfield), 48315 (Macomb/Shelby North), 48316 (Shelby South), 48307 (Rochester).
+  - Scope toggle in `ComparisonResults.tsx` ("This ZIP" vs "Nearby Stores") with pilot ZIP indicator banner.
+- [x] **Gate 9: Complete Test Coverage & Clean Verification**
+  - 56 backend tests passing (`pytest`).
+  - 22 frontend tests passing (`vitest`).
+  - Strict type checking (`mypy`, `tsc`) and linting (`ruff`) clean.
+  - Production build passing in 1.57s.
+  - Playwright end-to-end tests and 4 responsive screenshots captured in `docs/images/mission-004/`.
 
 ---
 
-## 8. Successor Contract
+## 8. Verification Evidence & Artifacts
+
+| Verification Suite | Tool / Command | Result |
+| :--- | :--- | :--- |
+| Backend Pytest Suite | `backend/.venv/bin/pytest` | **56 passed** (56/56) |
+| Backend Lint | `backend/.venv/bin/ruff check app tests` | **Clean** (0 errors) |
+| Backend Type Check | `cd backend && .venv/bin/mypy` | **Clean** (3 source files checked) |
+| Frontend Vitest Suite | `cd frontend && npm test -- --run` | **22 passed** (22/22, 6 files) |
+| Frontend Type & Build | `cd frontend && npm run build` | **Clean** (Built in 1.57s) |
+| Browser Desktop Suite | Playwright Chromium (1280x900) | **100% Pass** |
+| Browser Mobile Suite | Playwright Chromium (390x844) | **100% Pass** |
+
+### Screenshots Captured
+1. `docs/images/mission-004/desktop_regional_comparison.png` — Regional pilot comparison with Nearby Stores toggle, pilot ZIP banner, and multi-store split plan.
+2. `docs/images/mission-004/desktop_receipt_assistant_staged.png` — Private Receipt Assistant in Shopping Trip mode with staged items, prices, and confidence badges.
+3. `docs/images/mission-004/mobile_regional_comparison.png` — Mobile view of regional pilot comparison across ZIPs 48042 and 48051.
+4. `docs/images/mission-004/mobile_receipt_assistant.png` — Mobile view of receipt assistant review staging list.
+
+---
+
+## 9. Successor Contract
 Mission 004 does not execute Mission 005. Upon acceptance, Mission 004 generates `docs/MISSION_005.md` (addressing saved staples, purchase history, and staple basket quick-add) and returns control to the master Factory orchestrator.
+

@@ -28,6 +28,7 @@ export const App: React.FC = () => {
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [comparisonSource, setComparisonSource] = useState<"demonstration" | "user_contributed">("demonstration");
   const [selectedZipCode, setSelectedZipCodeState] = useState<string | null>(getSelectedZipCode());
+  const [regionScope, setRegionScope] = useState<"exact" | "neighborhood">("exact");
   const [isComparing, setIsComparing] = useState(false);
   const [isSavedDrawerOpen, setIsSavedDrawerOpen] = useState(false);
   const [savedLists, setSavedLists] = useState(getSavedLists());
@@ -134,15 +135,17 @@ export const App: React.FC = () => {
 
   const handleComparePrices = async (
     source: "demonstration" | "user_contributed" = "demonstration",
-    zipCode?: string | null
+    zipCode?: string | null,
+    scope: "exact" | "neighborhood" = regionScope
   ) => {
     if (!list || list.items.length === 0) return;
     setIsComparing(true);
     setError(null);
     setComparisonSource(source);
+    setRegionScope(scope);
     const activeZip = zipCode !== undefined ? zipCode : selectedZipCode;
     try {
-      const res = await api.comparePrices(list.id, source, activeZip);
+      const res = await api.comparePrices(list.id, source, activeZip, scope);
       setComparison(res);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to compare prices");
@@ -154,7 +157,12 @@ export const App: React.FC = () => {
   const handleFilterZip = (zip: string | null) => {
     setSelectedZipCodeState(zip);
     setSelectedZipCode(zip);
-    handleComparePrices(comparisonSource, zip);
+    handleComparePrices(comparisonSource, zip, regionScope);
+  };
+
+  const handleSetRegionScope = (scope: "exact" | "neighborhood") => {
+    setRegionScope(scope);
+    handleComparePrices(comparisonSource, selectedZipCode, scope);
   };
 
   const handleNewList = async () => {
@@ -238,6 +246,7 @@ export const App: React.FC = () => {
             onBackToList={() => setComparison(null)}
             onSwitchSource={(s) => handleComparePrices(s, selectedZipCode)}
             onFilterZip={handleFilterZip}
+            onSetRegionScope={handleSetRegionScope}
             isSwitching={isComparing}
           />
         ) : list ? (

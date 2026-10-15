@@ -52,6 +52,11 @@ export const api = {
     return request<Product[]>(`/products?${params.toString()}`);
   },
 
+  async getProducts(limit = 100): Promise<Product[]> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return request<Product[]>(`/products?${params.toString()}`);
+  },
+
   async createList(name?: string): Promise<GroceryList> {
     return request<GroceryList>("/lists", {
       method: "POST",
@@ -93,9 +98,10 @@ export const api = {
   async comparePrices(
     listId: string,
     source: "demonstration" | "user_contributed" = "demonstration",
-    zipCode?: string | null
+    zipCode?: string | null,
+    regionScope: "exact" | "neighborhood" | "regional" = "exact"
   ): Promise<ComparisonResponse> {
-    const params = new URLSearchParams({ source });
+    const params = new URLSearchParams({ source, region_scope: regionScope });
     if (zipCode && zipCode.trim()) {
       params.set("zip_code", zipCode.trim());
     }

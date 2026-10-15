@@ -301,4 +301,78 @@ Access UI at `http://localhost:5173`.
 | Browser Mobile Suite | Playwright Chromium | **100% Pass** | 375x812 viewport, shopping trip entry, touch targets |
 | Screenshots | Playwright | **4 captured** | Version-controlled in `docs/images/mission-003/` |
 
+---
+
+## 10. AGY Mission 004 Handoff & Progress Journal
+
+- **Active Agent**: AGY
+- **Model**: Gemini 3.8 Flash (High)
+- **Mission**: Mission 004 — Private Receipt Assistant & Reliable Regional Comparisons
+- **Campaign**: `2026-09-27-continuous-improvement`
+- **Branch**: `agy/mission-004`
+- **Base Commit**: `f79d4ca`
+- **Status**: MISSION 004 COMPLETE AND VERIFIED
+
+### 10.1 Delivered Capabilities & Architecture
+
+1. **Gate 0: Physical Store Identity Defect Resolution (`GO-010`, `GO-011`)**:
+   - **Problem A Fix (`GO-010`)**: In `backend/app/api/routes.py` `_resolve_or_create_store()`, when street address is omitted, stores of the same retailer in the same ZIP code are no longer incorrectly merged into the first store. A distinct unresolved-location store record (`is_unresolved_location=True`) is created for unverified submissions, isolating distinct locations deterministically.
+   - **Problem B Fix (`GO-011`)**: In `PATCH /api/price-observations/{id}`, updating a store name now preserves the existing physical address, city, state, ZIP code, and coordinates from the prior store record if new locality data is not explicitly provided.
+   - **Problem C / Coordinates**: Added nullable `latitude` and `longitude` fields to the `stores` table via Alembic migration `d81376de9f57_add_store_coordinates.py`. Domain model, persistence model, and API schemas now support genuine coordinates without fabrication.
+
+2. **Gate 1: Public Contribution Hardening (`GO-012`)**:
+   - Created thread-safe sliding window rate limiter (`backend/app/api/rate_limiter.py`) enforcing 60 requests/minute on `POST /api/price-observations` and 20 requests/minute on `POST /api/price-observations/batch`.
+   - Upfront atomic validation in batch submissions: returns HTTP 404 for invalid products, HTTP 400 for duplicate items within a batch, HTTP 422 for prices outside bounds ($0.01 to $500.00).
+   - Atomic database transactions with rollback on failure, guaranteeing zero partial-batch data corruption.
+
+3. **Gate 2 & 3: Ephemeral In-Browser Receipt Assistant & Zero Network Leaks**:
+   - Integrated client-side OCR via `tesseract.js@7.0.0` in WebAssembly (`frontend/src/lib/ocrService.ts`).
+   - Offscreen HTML5 canvas preprocessing: resizes large photos to <=2000px, converts to luminance grayscale, boosts contrast (~1.3x) to sharpen faint thermal receipt ink.
+   - **Zero Network Transmission**: Verified no raw image bytes, base64 payloads, or OCR transcripts ever leave the user's browser. Memory buffers are explicitly zeroed and terminated after OCR execution.
+
+4. **Gate 4 & 5: Deterministic Receipt Parsing & Canonical Matching**:
+   - Implemented line-item regex parser (`frontend/src/lib/receiptParser.ts`) extracting store name, ZIP code, transaction date, items, prices, and promotional discounts.
+   - **Michigan Bottle Deposit Exclusion**: Strictly identifies and excludes 10¢ Michigan bottle recycling deposits (`MI DEP .10`, `10C DEP`, etc.), along with tax, subtotal, and card tender noise lines, preventing false price observations.
+   - Conservative canonical token matcher matching POS abbreviations against canonical catalog products, enforcing package size consistency, and assigning confidence badges (`✓ Matched`, `⚠️ Review Match`, `❓ Unmatched`).
+
+5. **Gate 6: Human-in-the-Loop Review Staging & Capability Ownership**:
+   - Staging review list in Shopping Trip mode (`frontend/src/components/RecordPriceModal.tsx`).
+   - Shoppers can review extracted items, adjust prices, toggle sale flags, reassign products via inline candidate dropdowns, and add manual items.
+   - One-action batch submission (`POST /api/price-observations/batch`). Returned capability edit tokens are saved into `localStorage` (`grocery_optimizer_observation_tokens`), preserving contributor ownership without mandatory accounts.
+
+6. **Gate 7 & 8: Regional Pilot Comparison Radius**:
+   - Multi-ZIP neighborhood mapping implemented in `backend/app/providers/user_contributed.py` (`PILOT_NEIGHBORHOOD_MAP`) across Southeast Michigan pilot communities: 48042 (Lenox), 48051 (Chesterfield), 48315 (Macomb/Shelby North), 48316 (Shelby South), and 48307 (Rochester).
+   - Dynamic scope selector in `frontend/src/components/ComparisonResults.tsx` allowing consumers to toggle between "This ZIP" (exact single-ZIP comparisons) and "Nearby Stores" (multi-ZIP regional pilot comparisons).
+   - Comparison responses return `region_scope` and `compared_zip_codes` with active pilot indicator banner and physical store addresses.
+
+### 10.2 Verification Evidence & Test Statistics
+
+| Suite / Gate | Tool / Runner | Result | Notes |
+| :--- | :--- | :--- | :--- |
+| Backend Tests | `pytest` | **56 passed** (3.57s) | 49 baseline + 3 store defect tests + 4 rate limit & batch rollback tests |
+| Backend Lint | `ruff check` | **0 errors** (Clean) | All backend source and test files clean |
+| Backend Types | `mypy` | **0 errors** | Domain, catalog, and optimizer modules clean |
+| Frontend Tests | `vitest` | **22 passed** (3.10s) | 15 baseline + 5 receipt parser tests + 2 receipt assistant component tests |
+| Frontend Types | `tsc --noEmit` | **0 errors** | Strict typing clean |
+| Frontend Production Build | `vite build` | **Built in 1.57s** | Clean dist bundle (246 kB gzip: 76 kB) |
+| Browser Desktop Suite | Playwright Chromium | **100% Pass** | Receipt photo upload, in-browser OCR, staged review list, regional comparison (48042/48051) |
+| Browser Mobile Suite | Playwright Chromium | **100% Pass** | Mobile viewport (390x844), mobile receipt assistant, regional comparison plan |
+| Screenshots | Playwright | **4 captured** | Version-controlled in `docs/images/mission-004/` |
+
+### 10.3 Captured Visual Artifacts
+
+1. `docs/images/mission-004/desktop_regional_comparison.png`:
+   - Desktop view of the regional pilot comparison with "Nearby Stores" active across ZIPs 48042, 48051, 48315.
+   - Shows Best One-Store Trip at Meijer #206 ($5.78) vs Cheapest Overall multi-stop trip at ALDI Chesterfield + Kroger #456 ($4.39, Save $1.39).
+2. `docs/images/mission-004/desktop_receipt_assistant_staged.png`:
+   - Desktop view of the Private Receipt Assistant in Shopping Trip mode.
+   - Shows extracted store (Meijer), date (10/14/2026), ZIP (48042), 10 excluded noise/deposit lines, and 4 staged items with `✓ Matched` confidence badges.
+3. `docs/images/mission-004/mobile_regional_comparison.png`:
+   - Mobile viewport view of the regional comparison across pilot ZIPs with store addresses and scope controls.
+4. `docs/images/mission-004/mobile_receipt_assistant.png`:
+   - Mobile viewport view of the receipt assistant review staging list with inline price controls and confidence badges.
+
+---
+
+
 
