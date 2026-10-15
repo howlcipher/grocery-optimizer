@@ -5,6 +5,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -106,3 +107,23 @@ class GroceryListItemModel(Base):
     __table_args__ = (
         UniqueConstraint("list_id", "product_id", name="uq_list_product"),
     )
+
+
+class PriceObservationModel(Base):
+    __tablename__ = "price_observations"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    product_id = Column(String(64), ForeignKey("products.id"), nullable=False, index=True)
+    store_id = Column(String(64), ForeignKey("stores.id"), nullable=True, index=True)
+    store_name = Column(String(255), nullable=False)
+    price_cents = Column(Integer, nullable=False)
+    observation_date = Column(Date, nullable=False, index=True)
+    is_promotional = Column(Boolean, nullable=False, default=False)
+    notes = Column(String(500), nullable=True)
+    contributor_id = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    product = relationship("ProductModel")
+    store = relationship("StoreModel")
+

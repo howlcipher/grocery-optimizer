@@ -50,6 +50,10 @@ describe("ComparisonResults component", () => {
     },
     savings_cents: 624,
     additional_stops: 1,
+    pricing_source: "demonstration",
+    pricing_source_label: "Demonstration Prices (Sample Data)",
+    is_demonstration: true,
+    data_notice: "Prices shown are demonstration sample data from the mission seeder.",
   };
 
   it("renders one-store total, cheapest overall total, and savings badge", () => {
@@ -130,6 +134,10 @@ describe("ComparisonResults component", () => {
       },
       savings_cents: null,
       additional_stops: 0,
+      pricing_source: "demonstration",
+      pricing_source_label: "Demonstration Prices (Sample Data)",
+      is_demonstration: true,
+      data_notice: "Prices shown are demonstration sample data.",
     };
 
     render(

@@ -4,9 +4,12 @@ import { ProductSearch } from "./components/ProductSearch";
 import { GroceryList } from "./components/GroceryList";
 import { ComparisonResults } from "./components/ComparisonResults";
 import { SavedListsDrawer } from "./components/SavedListsDrawer";
+import { RecordPriceModal } from "./components/RecordPriceModal";
+import { ProductPricesModal } from "./components/ProductPricesModal";
 import {
   ComparisonResponse,
   GroceryList as GroceryListType,
+  PriceObservation,
   Product,
 } from "./types";
 import { api } from "./api/client";
@@ -21,11 +24,19 @@ import {
 export const App: React.FC = () => {
   const [list, setList] = useState<GroceryListType | null>(null);
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
+  const [comparisonSource, setComparisonSource] = useState<"demonstration" | "user_contributed">("demonstration");
   const [isComparing, setIsComparing] = useState(false);
   const [isSavedDrawerOpen, setIsSavedDrawerOpen] = useState(false);
   const [savedLists, setSavedLists] = useState(getSavedLists());
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Price observation modals state
+  const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
+  const [recordModalProduct, setRecordModalProduct] = useState<Product | null>(null);
+  const [editingObservation, setEditingObservation] = useState<PriceObservation | null>(null);
+  const [isPricesModalOpen, setIsPricesModalOpen] = useState(false);
+  const [pricesModalProduct, setPricesModalProduct] = useState<Product | null>(null);
 
   const refreshSavedLists = useCallback(() => {
     setSavedLists(getSavedLists());
@@ -45,7 +56,6 @@ export const App: React.FC = () => {
         setIsLoading(false);
         return;
       } catch {
-        // If list doesn't exist on server, remove from storage and fall through
         removeSavedList(storedId);
         refreshSavedLists();
       }
@@ -76,7 +86,6 @@ export const App: React.FC = () => {
       setList(updated);
       saveListMetadata(updated.id, updated.name || "My Grocery List");
       refreshSavedLists();
-      // If we previously had comparison results, invalidate them since list changed
       if (comparison) setComparison(null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to add product");
@@ -120,12 +129,13 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleComparePrices = async () => {
+  const handleComparePrices = async (source: "demonstration" | "user_contributed" = "demonstration") => {
     if (!list || list.items.length === 0) return;
     setIsComparing(true);
     setError(null);
+    setComparisonSource(source);
     try {
-      const res = await api.comparePrices(list.id);
+      const res = await api.comparePrices(list.id, source);
       setComparison(res);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to compare prices");
@@ -178,11 +188,23 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleOpenRecordPriceModal = (product?: Product | null, editObs?: PriceObservation | null) => {
+    setRecordModalProduct(product || null);
+    setEditingObservation(editObs || null);
+    setIsRecordModalOpen(true);
+  };
+
+  const handleOpenProductPricesModal = (product: Product) => {
+    setPricesModalProduct(product);
+    setIsPricesModalOpen(true);
+  };
+
   return (
     <div className="app-container">
       <Header
         onOpenSavedLists={() => setIsSavedDrawerOpen(true)}
         onNewList={handleNewList}
+        onOpenRecordPrice={() => handleOpenRecordPriceModal(null, null)}
         savedListsCount={savedLists.length}
       />
 
@@ -201,6 +223,8 @@ export const App: React.FC = () => {
           <ComparisonResults
             comparison={comparison}
             onBackToList={() => setComparison(null)}
+            onSwitchSource={handleComparePrices}
+            isSwitching={isComparing}
           />
         ) : list ? (
           <>
@@ -211,6 +235,8 @@ export const App: React.FC = () => {
               onUpdateQuantity={handleUpdateQuantity}
               onRemoveItem={handleRemoveItem}
               onComparePrices={handleComparePrices}
+              onCompareProductPrices={handleOpenProductPricesModal}
+              onRecordPriceForProduct={(prod) => handleOpenRecordPriceModal(prod, null)}
               isComparing={isComparing}
             />
           </>
@@ -225,6 +251,40 @@ export const App: React.FC = () => {
         onSelectList={handleSelectList}
         onDeleteList={handleDeleteSavedList}
         onNewList={handleNewList}
+      />
+
+      <RecordPriceModal
+        isOpen={isRecordModalOpen}
+        onClose={() => {
+          setIsRecordModalOpen(false);
+          setRecordModalProduct(null);
+          setEditingObservation(null);
+        }}
+        initialProduct={recordModalProduct}
+        initialStoreName={editingObservation?.store_name || ""}
+        initialPriceCents={editingObservation?.price_cents}
+        initialDate={editingObservation?.observation_date || ""}
+        initialNotes={editingObservation?.notes || ""}
+        initialPromotional={editingObservation?.is_promotional || false}
+        editingObservationId={editingObservation?.id || null}
+        onSaved={() => {
+          if (comparison && comparisonSource === "user_contributed") {
+            handleComparePrices("user_contributed");
+          }
+        }}
+      />
+
+      <ProductPricesModal
+        isOpen={isPricesModalOpen}
+        onClose={() => {
+          setIsPricesModalOpen(false);
+          setPricesModalProduct(null);
+        }}
+        product={pricesModalProduct}
+        onRecordPriceForProduct={(prod, editObs) => {
+          setIsPricesModalOpen(false);
+          handleOpenRecordPriceModal(prod, editObs || null);
+        }}
       />
     </div>
   );

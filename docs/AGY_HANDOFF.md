@@ -161,3 +161,82 @@ cd frontend
 npm run dev
 ```
 Access UI at `http://localhost:5173`.
+
+---
+
+## 8. Mission 002 — Real-World Pricing Foundation & User-Contributed Architecture
+
+- **Active Agent**: AGY
+- **Model**: Gemini 3.8 Flash (High)
+- **Mission**: Mission 002 — Real-World Pricing Foundation
+- **Campaign**: `2026-09-27-continuous-improvement`
+- **Branch**: `agy/mission-002`
+- **Baseline Commit**: `68898ba` (Mission 001 merged into `main`)
+- **Status**: IMPLEMENTATION COMPLETE & VERIFIED — READY FOR USER ACCEPTANCE
+
+### 8.1 Empirical Coverage Study & Gate Decisions
+
+1. **Kroger Developer API Assessment**:
+   - Status: **BLOCKED PENDING PARTNER AUTHORIZATION**.
+   - Section 5(e) of Kroger developer terms prohibits database creation, competitive cross-retailer comparison, and public redistribution.
+   - All speculative claims of automatic compliance were revised to conditional, evidence-based legal assessments.
+
+2. **Open Prices Pilot Coverage Study (Southeast Michigan, ZIP 48042)**:
+   - Tool: Reproducible Python study querying `https://prices.openfoodfacts.org/api/v1`.
+   - Results: Within 100 km radius of ZIP 48042 (11 locations total; 9 in Michigan, 2 in Windsor CAD), 619 distinct products were observed across stores.
+   - Cross-store overlap: **0 products were observed at $\ge 2$ nearby stores** under exact UPC barcode matching.
+   - Basket coverage: Complete 1-store or 2-store baskets possible = **0 (Zero)**.
+   - Gate Decision: **NO-GO for Path A** (automated Open Prices basket comparison). Proceeding with Path A would have forced artificial price generation or partial representation as a complete plan, violating user trust.
+   - Strategy: Proceeded to **Path B (User-Contributed Pricing Foundation)** with strict data provenance, while preserving Open Prices client and normalizer components for future regional dataset ingest.
+
+### 8.2 Delivered Capabilities
+
+1. **Domain Layer Provenance (`backend/app/domain/models.py`)**:
+   - `PriceSource` enum: `DEMONSTRATION`, `USER_CONTRIBUTED`, `OPEN_PRICES`, `LIVE_RETAILER`.
+   - `PriceObservation` domain model with integer-cent pricing, date validation, and promotional tagging.
+   - Provenance metadata added to `ProductOffer`, `ShoppingPlan`, and `ComparisonResult`.
+
+2. **Database Persistence & Migrations (`backend/alembic/versions/2530c8dd1af6_*.py`)**:
+   - `price_observations` table with UUID primary key, foreign keys to products and stores, indexed for rapid product and store lookups.
+   - SQLAlchemy 2.0 ORM model in `backend/app/persistence/models.py`.
+
+3. **Provider Layer (`backend/app/providers/`)**:
+   - `UserContributedRetailerProvider`: Dynamically aggregates recorded observations; newest observation wins in conflicts; flags observations >30 days as stale.
+   - `OpenPricesClient`, `OpenPricesNormalizer`, and `OpenPricesProvider`: Complete client implementation supporting USD currency enforcement, barcode matching, integer-cent conversion, and HTTP 429 rate limit backoff.
+
+4. **REST API Routes (`backend/app/api/routes.py`)**:
+   - `GET /api/price-observations`: List filtered observations.
+   - `POST /api/price-observations`: Record observation ($0.01 to $500.00 bounds, past date validation, canonical store linking).
+   - `PATCH /api/price-observations/{id}`: Correct an observation.
+   - `DELETE /api/price-observations/{id}`: Remove an observation.
+   - `GET /api/products/{id}/prices`: Cross-store price comparison for a specific product.
+   - `POST /api/lists/{id}/compare?source=...`: Isolated comparison execution (either 100% demonstration data or 100% user-entered observations).
+
+5. **Frontend User Experience (`frontend/src/`)**:
+   - `RecordPriceModal.tsx`: Shelf price recording modal with pre-selected product, store chips, price input, date picker, sale toggle, and consumer notice.
+   - `ProductPricesModal.tsx`: Product store price comparison modal highlighting lowest price, observation dates, and stale tags.
+   - `ComparisonResults.tsx`: Real-time source switcher (`🧪 Demo Data` vs `👥 User Observations`) with provenance badges (`pill-demo`, `pill-user`) and truthful unfulfillable basket alerts.
+   - `GroceryList.tsx`: Added `🔍 Compare Stores` and `+ Record Price` inline actions on every item.
+   - `Header.tsx`: Added global `+ Record Price` button.
+
+### 8.3 Verification Evidence & Test Statistics
+
+| Suite / Gate | Tool / Runner | Result | Notes |
+| :--- | :--- | :--- | :--- |
+| Backend Tests | `pytest` | **38 passed** (1.33s) | 24 Mission 001 + 14 Mission 002 tests |
+| Backend Lint | `ruff check` | **0 errors** (Clean) | All files formatted |
+| Backend Types | `mypy` | **0 errors** | Core modules clean |
+| Frontend Tests | `vitest` | **14 passed** (4 test files) | 10 Mission 001 + 4 Mission 002 tests |
+| Frontend Types | `tsc --noEmit` | **0 errors** | Strict typing clean |
+| Frontend Lint | `eslint` | **0 errors, 0 warnings** | Clean |
+| Production Build | `vite build` | **Built in 1.41s** | Bundle optimized |
+| Browser Desktop Suite | Playwright Chromium | **100% Pass** | Full workflow, modals, source switching |
+| Browser Mobile Suite | Playwright Chromium | **100% Pass** | 375x812 viewport, 0 overflow, >=44px touch targets |
+| Screenshots | Playwright | **3 captured** | Version-controlled in `docs/images/mission-002/` |
+
+### 8.4 Known Limitations & Open Findings
+
+- `GO-002` (P3): Catalog search scans in-memory domain slice; recommend adding PostgreSQL trigram index (`pg_trgm`) for enterprise catalog sizes.
+- `GO-004` (P3): Exhaustive store enumeration complexity grows with $O(N^2)$; acceptable for small store networks, requires candidate pruning for large retailer networks.
+- `GO-006` (P3): Open Prices dataset currently lacks geographic density in suburban US regions (0 cross-store product overlap in SE Michigan); Path B (User-Contributed Pricing) provides the bridge until community density matures.
+

@@ -79,9 +79,68 @@ export const api = {
     });
   },
 
-  async comparePrices(listId: string): Promise<ComparisonResponse> {
-    return request<ComparisonResponse>(`/lists/${listId}/compare`, {
+  async comparePrices(
+    listId: string,
+    source: "demonstration" | "user_contributed" = "demonstration"
+  ): Promise<ComparisonResponse> {
+    const params = new URLSearchParams({ source });
+    return request<ComparisonResponse>(`/lists/${listId}/compare?${params.toString()}`, {
       method: "POST",
     });
   },
+
+  async getPriceObservations(
+    productId?: string,
+    storeId?: string,
+    limit = 50
+  ): Promise<import("../types").PriceObservation[]> {
+    const params = new URLSearchParams();
+    if (productId) params.set("product_id", productId);
+    if (storeId) params.set("store_id", storeId);
+    params.set("limit", String(limit));
+    return request<import("../types").PriceObservation[]>(`/price-observations?${params.toString()}`);
+  },
+
+  async createPriceObservation(data: {
+    product_id: string;
+    store_name: string;
+    price_cents: number;
+    observation_date: string;
+    is_promotional?: boolean;
+    notes?: string | null;
+  }): Promise<import("../types").PriceObservation> {
+    return request<import("../types").PriceObservation>("/price-observations", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updatePriceObservation(
+    observationId: string,
+    data: {
+      store_name?: string;
+      price_cents?: number;
+      observation_date?: string;
+      is_promotional?: boolean;
+      notes?: string | null;
+    }
+  ): Promise<import("../types").PriceObservation> {
+    return request<import("../types").PriceObservation>(`/price-observations/${observationId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deletePriceObservation(observationId: string): Promise<{ status: string; id: string }> {
+    return request<{ status: string; id: string }>(`/price-observations/${observationId}`, {
+      method: "DELETE",
+    });
+  },
+
+  async compareProductStorePrices(
+    productId: string
+  ): Promise<import("../types").ProductPricesComparisonResponse> {
+    return request<import("../types").ProductPricesComparisonResponse>(`/products/${productId}/prices`);
+  },
 };
+

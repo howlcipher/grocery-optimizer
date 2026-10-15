@@ -3,12 +3,14 @@ import React from "react";
 interface HeaderProps {
   onOpenSavedLists: () => void;
   onNewList: () => void;
+  onOpenRecordPrice?: () => void;
   savedListsCount: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onOpenSavedLists,
   onNewList,
+  onOpenRecordPrice,
   savedListsCount,
 }) => {
   return (
@@ -20,6 +22,16 @@ export const Header: React.FC<HeaderProps> = ({
         <span>Grocery Optimizer</span>
       </div>
       <div className="header-actions">
+        {onOpenRecordPrice && (
+          <button
+            type="button"
+            className="btn btn-secondary touch-target"
+            onClick={onOpenRecordPrice}
+            aria-label="Record store price"
+          >
+            + Record Price
+          </button>
+        )}
         <button
           type="button"
           className="btn btn-secondary touch-target"
@@ -40,3 +52,4 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+
