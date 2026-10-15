@@ -32,12 +32,12 @@ Following a thorough investigation of the official Kroger Developer Portal (`dev
 
 | Use Case | Status | Notes / Conditions |
 | :--- | :--- | :--- |
-| **Intra-Kroger Store Comparison** (e.g. Kroger Store A vs Kroger Store B or Ralphs vs Fred Meyer) | **PERMITTED (Conditional)** | Allowed under Kroger developer terms if prices are fetched in real-time, cached only within HTTP cache headers, and attributed accurately. |
+| **Intra-Kroger Store Comparison** (e.g. Kroger Store A vs Kroger Store B or Ralphs vs Fred Meyer) | **CONDITIONAL (Subject to Partner Approval)** | While querying within one retail family avoids cross-competitor disparagement, Section 5(e) of Kroger developer terms restricts derivative works, permanent storage, and public displays. Kroger reserves unilateral termination rights. Cannot be assumed automatically compliant without written authorization. |
 | **Cross-Retailer Comparison (Kroger vs. Walmart / Aldi)** via Kroger Public API | **PROHIBITED without Partner Agreement** | Violates Section 5(e) derivative work, database building, and redistribution clauses without written commercial authorization. |
 | **Scraping Kroger Website or Circumventing API** | **STRICTLY PROHIBITED** | Violates Kroger terms of use and computer fraud provisions. Scrapers will never be used. |
 | **Simulated Comparison using Synthetic Mock Data** | **PERMITTED** | Fully permitted for design, testing, and algorithmic demonstration, provided it is prominently labeled as synthetic/demonstration data. |
-| **User-Entered / Crowdsourced Pricing** | **PERMITTED** | Shoppers submit receipt or shelf prices directly; 100% compliant with all retailer terms. |
-| **Licensed Aggregator API (e.g. Authorized Retail Intelligence)** | **PERMITTED** | If pricing data is licensed through an authorized provider contractually permitted to supply competitive data. |
+| **User-Entered / Crowdsourced Pricing** | **PERMITTED (Conditional)** | Bypasses retailer API terms, but requires user consent, receipt privacy sanitization, explicit labeling as subjective user observations, and disclaimers against store-authorized price representation. |
+| **Licensed Aggregator API (e.g. Authorized Retail Intelligence)** | **PERMITTED (Conditional)** | Permitted only if pricing data is licensed through an authorized provider contractually permitted to supply competitive retail data. |
 
 ---
 
@@ -105,14 +105,14 @@ flowchart TD
 
 If Kroger denies permission for cross-retailer competitive comparison, Mission 002 will execute one of the following authorized alternatives:
 
-### Pathway A: Intra-Kroger Multi-Store Optimizer (Recommended for Kroger API)
+### Pathway A: Intra-Kroger Multi-Store Optimizer (Subject to Partner Approval)
 - **Concept**: Compare pricing and inventory across different Kroger-owned banner locations within a metro area (e.g., Kroger vs. Ralphs vs. Fred Meyer vs. Dillons).
-- **Compliance**: 100% compliant with Kroger developer terms (benefits Kroger ecosystem, zero competitor disparagement).
+- **Compliance**: Conditional; requires adherence to transient caching and avoiding permanent databases, but still subject to Kroger's discretionary termination and restrictions on public display of derivative data without a partner agreement.
 - **Consumer Value**: Shoppers discover which nearby Kroger banner offers the best promotional discounts for their weekly list.
 
 ### Pathway B: Open Product Data & User-Contributed Pricing
-- **Concept**: Integrate Open Food Facts / USDA FoodData Central for canonical UPC catalog and allow shoppers to enter or scan prices locally.
-- **Compliance**: 100% independent of restrictive retailer APIs.
+- **Concept**: Integrate Open Food Facts / Open Prices / USDA FoodData Central for canonical UPC catalog and allow shoppers to record observed prices locally.
+- **Compliance**: Independent of retailer API restrictions; requires clear user terms, robust attribution, and disclaimers clarifying user-observed nature to avoid false advertising claims.
 
 ### Pathway C: Authorized Commercial Retail API
 - **Concept**: Connect to an authorized data provider contractually licensed to distribute multi-retailer shelf prices.
