@@ -431,7 +431,7 @@ button, input, select, textarea {
 
 .plan-items-table th,
 .plan-items-table td {
-  padding: 12px 20px;
+  padding: 10px 12px;
   text-align: left;
   border-bottom: 1px solid #f1f5f9;
 }
@@ -513,3 +513,54 @@ button, input, select, textarea {
   border: 1px solid #fecaca;
   color: var(--color-danger);
 }
+
+@media (max-width: 640px) {
+  .app-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .header-actions {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+  }
+
+  .header-actions .btn {
+    flex: 1;
+    padding: 0 10px;
+    font-size: 0.875rem;
+  }
+
+  .brand-title {
+    font-size: 1.35rem;
+  }
+
+  .store-group-card {
+    overflow-x: auto;
+  }
+
+  .store-group-header {
+    padding: 10px 12px;
+    font-size: 1rem;
+  }
+
+  .plan-items-table th,
+  .plan-items-table td {
+    padding: 8px 6px;
+    font-size: 0.875rem;
+  }
+
+  .sale-pill {
+    padding: 1px 4px;
+    font-size: 0.65rem;
+    margin-left: 4px;
+  }
+
+  .original-price-strike {
+    font-size: 0.75rem;
+    margin-left: 4px;
+  }
+}
+
