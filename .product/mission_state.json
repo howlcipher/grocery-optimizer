@@ -3,7 +3,7 @@
   "campaign_id": "2026-09-27-continuous-improvement",
   "latest_completed_mission": "docs/MISSION_004.md",
   "next_mission": "docs/MISSION_005.md",
-  "status": "COMPLETE",
+  "status": "IN_PROGRESS",
   "open_findings": {
     "GO-002": {
       "severity": "P3",
@@ -64,7 +64,31 @@
       "category": "Security / Availability",
       "summary": "Public observation endpoints protected via sliding window rate limiter (60/min single, 20/min batch) and atomic transactional batch validation",
       "status": "RESOLVED"
+    },
+    "GO-013": {
+      "severity": "P1",
+      "category": "Data Integrity",
+      "summary": "Receipt parsing assigns parsed.address to storeCity in RecordPriceModal.tsx, corrupting store locality records",
+      "status": "RESOLVED"
+    },
+    "GO-014": {
+      "severity": "P1",
+      "category": "Data Integrity",
+      "summary": "Negative amount lines on receipts (refunds, tender change, receipt-wide discounts, negative tax) indiscriminately applied to preceding grocery items",
+      "status": "RESOLVED"
+    },
+    "GO-015": {
+      "severity": "P2",
+      "category": "Correctness",
+      "summary": "Receipt parsing silently substitutes current date when receipt date is unrecognized instead of requiring shopper confirmation",
+      "status": "RESOLVED"
+    },
+    "GO-016": {
+      "severity": "P2",
+      "category": "Correctness",
+      "summary": "Receipt parsing conflates multi-quantity line totals with unit prices",
+      "status": "RESOLVED"
     }
   },
-  "updated_at": "2026-10-15T19:42:00Z"
+  "updated_at": "2026-10-15T21:30:00Z"
 }

@@ -8,6 +8,8 @@ interface ProductPricesModalProps {
   onClose: () => void;
   product: Product | null;
   onRecordPriceForProduct: (product: Product, editObs?: PriceObservation) => void;
+  isProductStaple?: (productId: string) => boolean;
+  onToggleStaple?: (productId: string) => void;
 }
 
 export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
@@ -15,6 +17,8 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
   onClose,
   product,
   onRecordPriceForProduct,
+  isProductStaple,
+  onToggleStaple,
 }) => {
   const [data, setData] = useState<ProductPricesComparisonResponse | null>(null);
   const [zipFilter, setZipFilter] = useState(getSelectedZipCode() || "");
@@ -66,10 +70,32 @@ export const ProductPricesModal: React.FC<ProductPricesModalProps> = ({
       >
         <div className="drawer-header">
           <div>
-            <h2 id="product-prices-title" style={{ fontSize: "1.25rem", fontWeight: 700 }}>
-              {product.name}
-            </h2>
-            <div style={{ fontSize: "0.875rem", color: "var(--color-text-muted)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {onToggleStaple && (
+                <button
+                  type="button"
+                  className="touch-target star-btn"
+                  onClick={() => onToggleStaple(product.id)}
+                  aria-label={isProductStaple && isProductStaple(product.id) ? `Remove ${product.name} from staples` : `Add ${product.name} to staples`}
+                  title={isProductStaple && isProductStaple(product.id) ? "In My Staples" : "Add to My Staples"}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    fontSize: "1.3rem",
+                    cursor: "pointer",
+                    padding: "0 2px",
+                    lineHeight: 1,
+                    color: isProductStaple && isProductStaple(product.id) ? "#f59e0b" : "#94a3b8",
+                  }}
+                >
+                  {isProductStaple && isProductStaple(product.id) ? "★" : "☆"}
+                </button>
+              )}
+              <h2 id="product-prices-title" style={{ fontSize: "1.25rem", fontWeight: 700, margin: 0 }}>
+                {product.name}
+              </h2>
+            </div>
+            <div style={{ fontSize: "0.875rem", color: "var(--color-text-muted)", marginTop: 2 }}>
               {product.brand} • {product.package_quantity} {product.package_unit}
             </div>
           </div>

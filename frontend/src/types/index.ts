@@ -153,9 +153,54 @@ export interface ParsedReceiptItem {
 export interface ParsedReceipt {
   storeName?: string | null;
   date?: string | null;
+  hasRecognizedDate: boolean;
   address?: string | null;
+  city?: string | null;
+  state?: string | null;
   zipCode?: string | null;
   items: ParsedReceiptItem[];
   rawText: string;
   ignoredLines: string[];
 }
+
+export interface StapleItem {
+  product_id: string;
+  preferred_quantity: number;
+  created_at: string;
+  last_used_at?: string;
+  notes?: string;
+}
+
+export interface PurchaseHistoryItem {
+  product_id: string;
+  product_name: string;
+  price_cents: number;
+  quantity: number;
+}
+
+export interface PurchaseHistoryRecord {
+  id: string;
+  trip_date: string;
+  store_name: string;
+  retailer_name?: string | null;
+  address?: string | null;
+  city?: string | null;
+  zip_code?: string | null;
+  source: "receipt_scan" | "manual_trip";
+  total_cents: number;
+  items: PurchaseHistoryItem[];
+  recorded_at: string;
+}
+
+export interface PriceTrendInfo {
+  product_id: string;
+  store_name: string;
+  latest_price_cents: number;
+  latest_date: string;
+  previous_price_cents?: number | null;
+  previous_date?: string | null;
+  diff_cents?: number | null;
+  trend_direction: "down" | "up" | "equal" | "insufficient_data" | "no_data";
+  summary: string;
+}
+

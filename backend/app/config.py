@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg://howlcipher:grocery_dev@localhost:5432/grocery_optimizer"
+    database_url: str = "postgresql+psycopg://howlcipher:grocery_dev@127.0.0.1:5432/grocery_optimizer"
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

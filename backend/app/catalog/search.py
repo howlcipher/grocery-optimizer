@@ -1,5 +1,6 @@
 import re
 from collections.abc import Sequence
+from functools import lru_cache
 
 from app.domain.models import Product
 
@@ -7,6 +8,7 @@ _PUNCTUATION_RE = re.compile(r"[\.,\-\'\"/!\?#\$%\^&\*\(\)_+=<>;:\[\]\{\}]")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
+@lru_cache(maxsize=32768)
 def normalize_text(text: str) -> str:
     """Normalize text: lowercase, remove simple punctuation, collapse whitespace."""
     if not text:

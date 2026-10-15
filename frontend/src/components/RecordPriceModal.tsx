@@ -5,6 +5,7 @@ import {
   getRecentStores,
   hasObservationToken,
   saveRecentStore,
+  savePurchaseHistory,
 } from "../lib/storage";
 import { formatCents } from "../lib/money";
 import { recognizeReceiptText } from "../lib/ocrService";
@@ -30,6 +31,7 @@ interface RecordPriceModalProps {
   initialPromotional?: boolean;
   editingObservationId?: string | null;
   onSaved?: () => void;
+  onTripSaved?: (items: { product_id: string; product_name: string; quantity: number }[]) => void;
 }
 
 const REGIONAL_STORES = [
@@ -52,6 +54,7 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
   initialPromotional = false,
   editingObservationId = null,
   onSaved,
+  onTripSaved,
 }) => {
   // Mode: "single" for one product; "trip" for multi-item grocery receipt recording
   const [entryMode, setEntryMode] = useState<"single" | "trip">("single");
@@ -59,11 +62,13 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
   // Store metadata
   const [storeName, setStoreName] = useState(initialStoreName);
   const [retailerName, setRetailerName] = useState("");
+  const [storeAddress, setStoreAddress] = useState("");
   const [storeCity, setStoreCity] = useState("");
   const [storeZip, setStoreZip] = useState("");
   const [observationDate, setObservationDate] = useState(
     initialDate || new Date().toISOString().split("T")[0]
   );
+  const [unconfirmedDateWarning, setUnconfirmedDateWarning] = useState(false);
 
   // Single item form state
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(initialProduct);
@@ -95,7 +100,6 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-
   // Check if current user owns the observation being edited
   const isOwner = editingObservationId ? hasObservationToken(editingObservationId) : false;
 
@@ -111,9 +115,17 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
         const topRecent = recents[0];
         setStoreName(topRecent.name);
         setRetailerName(topRecent.retailer_name || "");
+        setStoreAddress(topRecent.address || "");
         setStoreCity(topRecent.city || "");
         setStoreZip(topRecent.zip_code || "");
+      } else {
+        setStoreName("");
+        setRetailerName("");
+        setStoreAddress("");
+        setStoreCity("");
+        setStoreZip("");
       }
+      setUnconfirmedDateWarning(false);
 
       setSelectedProduct(initialProduct);
       setPriceInput(initialPriceCents !== undefined ? (initialPriceCents / 100).toFixed(2) : "");
@@ -174,9 +186,10 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSelectRecentOrRegional = (name: string, retName?: string, city?: string, zip?: string) => {
+  const handleSelectRecentOrRegional = (name: string, retName?: string, city?: string, zip?: string, addr?: string) => {
     setStoreName(name);
     if (retName) setRetailerName(retName);
+    setStoreAddress(addr || "");
     if (city) setStoreCity(city);
     if (zip) setStoreZip(zip);
   };
@@ -248,14 +261,20 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
         setStoreName(parsed.storeName);
         setRetailerName(parsed.storeName);
       }
+      if (parsed.address && !storeAddress) {
+        setStoreAddress(parsed.address);
+      }
+      if (parsed.city && !storeCity) {
+        setStoreCity(parsed.city);
+      }
       if (parsed.zipCode && !storeZip) {
         setStoreZip(parsed.zipCode);
       }
-      if (parsed.address && !storeCity) {
-        setStoreCity(parsed.address);
-      }
-      if (parsed.date) {
+      if (parsed.hasRecognizedDate && parsed.date) {
         setObservationDate(parsed.date);
+        setUnconfirmedDateWarning(false);
+      } else {
+        setUnconfirmedDateWarning(true);
       }
 
       if (parsed.items.length === 0) {
@@ -369,11 +388,21 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
           is_promotional: isPromotional,
           notes: notes.trim() || null,
         });
+        saveRecentStore({
+          name: cleanStore,
+          retailer_name: retailerName.trim() || undefined,
+          address: storeAddress.trim() || undefined,
+          city: storeCity.trim() || undefined,
+          zip_code: storeZip.trim() || undefined,
+        });
+        if (onSaved) onSaved();
+        onClose();
       } else {
         await api.createPriceObservation({
           product_id: selectedProduct.id,
           store_name: cleanStore,
           retailer_name: retailerName.trim() || null,
+          address: storeAddress.trim() || null,
           city: storeCity.trim() || null,
           zip_code: storeZip.trim() || null,
           price_cents: priceCents,
@@ -381,17 +410,38 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
           is_promotional: isPromotional,
           notes: notes.trim() || null,
         });
+
+        saveRecentStore({
+          name: cleanStore,
+          retailer_name: retailerName.trim() || undefined,
+          address: storeAddress.trim() || undefined,
+          city: storeCity.trim() || undefined,
+          zip_code: storeZip.trim() || undefined,
+        });
+
+        // Record private local purchase history
+        savePurchaseHistory({
+          trip_date: observationDate,
+          store_name: cleanStore,
+          retailer_name: retailerName.trim() || null,
+          address: storeAddress.trim() || null,
+          city: storeCity.trim() || null,
+          zip_code: storeZip.trim() || null,
+          source: "manual_trip",
+          total_cents: priceCents,
+          items: [
+            {
+              product_id: selectedProduct.id,
+              product_name: selectedProduct.name,
+              price_cents: priceCents,
+              quantity: 1,
+            },
+          ],
+        });
+
+        if (onSaved) onSaved();
+        onClose();
       }
-
-      saveRecentStore({
-        name: cleanStore,
-        retailer_name: retailerName.trim() || undefined,
-        city: storeCity.trim() || undefined,
-        zip_code: storeZip.trim() || undefined,
-      });
-
-      if (onSaved) onSaved();
-      onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to record observation");
     } finally {
@@ -449,6 +499,7 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
       await api.createBatchPriceObservations({
         store_name: cleanStore,
         retailer_name: retailerName.trim() || null,
+        address: storeAddress.trim() || null,
         city: storeCity.trim() || null,
         zip_code: storeZip.trim() || null,
         observation_date: observationDate,
@@ -463,9 +514,38 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
       saveRecentStore({
         name: cleanStore,
         retailer_name: retailerName.trim() || undefined,
+        address: storeAddress.trim() || undefined,
         city: storeCity.trim() || undefined,
         zip_code: storeZip.trim() || undefined,
       });
+
+      // Record private local purchase history
+      savePurchaseHistory({
+        trip_date: observationDate,
+        store_name: cleanStore,
+        retailer_name: retailerName.trim() || null,
+        address: storeAddress.trim() || null,
+        city: storeCity.trim() || null,
+        zip_code: storeZip.trim() || null,
+        source: scanSummary ? "receipt_scan" : "manual_trip",
+        total_cents: tripTotalCents,
+        items: tripItems.map((it) => ({
+          product_id: it.product_id,
+          product_name: it.product_name,
+          price_cents: it.price_cents,
+          quantity: 1,
+        })),
+      });
+
+      if (onTripSaved) {
+        onTripSaved(
+          tripItems.map((it) => ({
+            product_id: it.product_id,
+            product_name: it.product_name,
+            quantity: 1,
+          }))
+        );
+      }
 
       if (onSaved) onSaved();
       onClose();
@@ -570,8 +650,16 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
                 key={s.id}
                 type="button"
                 className={`store-chip ${storeName === s.name && storeZip === (s.zip_code || "") ? "active" : ""}`}
-                onClick={() => handleSelectRecentOrRegional(s.name, s.retailer_name, s.city || undefined, s.zip_code || undefined)}
-                title={`Recently used: ${s.city || ""} ${s.zip_code || ""}`}
+                onClick={() =>
+                  handleSelectRecentOrRegional(
+                    s.name,
+                    s.retailer_name,
+                    s.city || undefined,
+                    s.zip_code || undefined,
+                    s.address || undefined
+                  )
+                }
+                title={`Recently used: ${s.address ? s.address + ", " : ""}${s.city || ""} ${s.zip_code || ""}`}
               >
                 🕒 {s.name} {s.zip_code ? `(${s.zip_code})` : ""}
               </button>
@@ -590,7 +678,7 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
             ))}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
             <div>
               <label className="form-label" htmlFor="obs-store-name" style={{ fontSize: "0.8rem" }}>
                 Store Name
@@ -606,6 +694,23 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
                 required
               />
             </div>
+            <div>
+              <label className="form-label" htmlFor="obs-address" style={{ fontSize: "0.8rem" }}>
+                Street Address (Optional)
+              </label>
+              <input
+                id="obs-address"
+                type="text"
+                className="search-input"
+                style={{ width: "100%", height: 38 }}
+                placeholder="e.g. 36865 26 Mile Rd"
+                value={storeAddress}
+                onChange={(e) => setStoreAddress(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
             <div>
               <label className="form-label" htmlFor="obs-city" style={{ fontSize: "0.8rem" }}>
                 City (Optional)
@@ -634,23 +739,35 @@ export const RecordPriceModal: React.FC<RecordPriceModalProps> = ({
                 onChange={(e) => setStoreZip(e.target.value)}
               />
             </div>
+            <div>
+              <label className="form-label" htmlFor="obs-date" style={{ fontSize: "0.8rem" }}>
+                Observation Date
+              </label>
+              <input
+                id="obs-date"
+                type="date"
+                max={new Date().toISOString().split("T")[0]}
+                className="search-input"
+                style={{ width: "100%", height: 38 }}
+                value={observationDate}
+                onChange={(e) => {
+                  setObservationDate(e.target.value);
+                  setUnconfirmedDateWarning(false);
+                }}
+                required
+              />
+            </div>
           </div>
 
-          <div style={{ marginTop: 8 }}>
-            <label className="form-label" htmlFor="obs-date" style={{ fontSize: "0.8rem" }}>
-              Observation Date
-            </label>
-            <input
-              id="obs-date"
-              type="date"
-              max={new Date().toISOString().split("T")[0]}
-              className="search-input"
-              style={{ width: "100%", height: 38 }}
-              value={observationDate}
-              onChange={(e) => setObservationDate(e.target.value)}
-              required
-            />
-          </div>
+          {unconfirmedDateWarning && (
+            <div
+              className="alert-box alert-warning"
+              role="alert"
+              style={{ marginTop: 8, fontSize: "0.85rem", padding: "6px 10px" }}
+            >
+              ⚠️ Receipt date was not recognized. Please verify or adjust the observation date above.
+            </div>
+          )}
         </section>
 
         {/* --- Single Product Mode Form --- */}
