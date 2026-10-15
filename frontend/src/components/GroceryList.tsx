@@ -1,12 +1,14 @@
 import React, { useState } from "react";
-import { GroceryItem, GroceryList as GroceryListType } from "../types";
+import { GroceryItem, GroceryList as GroceryListType, Product } from "../types";
 
 interface GroceryListProps {
   list: GroceryListType;
   onUpdateListName: (name: string) => void;
   onUpdateQuantity: (itemId: string, newQty: number) => void;
   onRemoveItem: (itemId: string) => void;
-  onComparePrices: () => void;
+  onComparePrices: (source: "demonstration" | "user_contributed") => void;
+  onCompareProductPrices?: (product: Product) => void;
+  onRecordPriceForProduct?: (product: Product) => void;
   isComparing: boolean;
 }
 
@@ -16,9 +18,12 @@ export const GroceryList: React.FC<GroceryListProps> = ({
   onUpdateQuantity,
   onRemoveItem,
   onComparePrices,
+  onCompareProductPrices,
+  onRecordPriceForProduct,
   isComparing,
 }) => {
   const [listName, setListName] = useState(list.name || "My Grocery List");
+  const [pricingMode, setPricingMode] = useState<"demonstration" | "user_contributed">("demonstration");
 
   const handleNameBlur = () => {
     if (listName.trim() !== (list.name || "")) {
@@ -85,6 +90,30 @@ export const GroceryList: React.FC<GroceryListProps> = ({
                     {item.product.brand} • {item.product.package_quantity}{" "}
                     {item.product.package_unit}
                   </div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                    {onCompareProductPrices && (
+                      <button
+                        type="button"
+                        className="link-button touch-target"
+                        style={{ height: 26, fontSize: "0.8rem", color: "var(--color-primary)" }}
+                        onClick={() => onCompareProductPrices(item.product)}
+                        aria-label={`Compare store prices for ${item.product.name}`}
+                      >
+                        🔍 Compare Stores
+                      </button>
+                    )}
+                    {onRecordPriceForProduct && (
+                      <button
+                        type="button"
+                        className="link-button touch-target"
+                        style={{ height: 26, fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+                        onClick={() => onRecordPriceForProduct(item.product)}
+                        aria-label={`Record price for ${item.product.name}`}
+                      >
+                        + Record Price
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="item-controls">
@@ -129,7 +158,39 @@ export const GroceryList: React.FC<GroceryListProps> = ({
             ))}
           </ul>
 
-          <div style={{ marginTop: 20 }}>
+          {/* Pricing Source Selection Bar */}
+          <div style={{ marginTop: 20, padding: "12px 16px", backgroundColor: "var(--color-bg)", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <span style={{ fontSize: "0.9rem", fontWeight: 600 }}>Compare with:</span>
+              <div className="source-toggle-group" role="radiogroup" aria-label="Comparison pricing dataset">
+                <button
+                  type="button"
+                  className={`source-toggle-btn ${pricingMode === "demonstration" ? "active" : ""}`}
+                  onClick={() => setPricingMode("demonstration")}
+                  role="radio"
+                  aria-checked={pricingMode === "demonstration"}
+                >
+                  🧪 Demo Data
+                </button>
+                <button
+                  type="button"
+                  className={`source-toggle-btn ${pricingMode === "user_contributed" ? "active" : ""}`}
+                  onClick={() => setPricingMode("user_contributed")}
+                  role="radio"
+                  aria-checked={pricingMode === "user_contributed"}
+                >
+                  👥 User Observations
+                </button>
+              </div>
+            </div>
+            <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: 6 }}>
+              {pricingMode === "demonstration"
+                ? "Uses synthetic demonstration store offers from Mission 001 seed data."
+                : "Uses real consumer-submitted shelf prices. Missing prices will not be faked or assumed."}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14 }}>
             <button
               type="button"
               className="btn btn-primary touch-target"
@@ -139,11 +200,15 @@ export const GroceryList: React.FC<GroceryListProps> = ({
                 fontSize: "1.1rem",
                 borderRadius: "var(--radius-md)",
               }}
-              onClick={onComparePrices}
+              onClick={() => onComparePrices(pricingMode)}
               disabled={isEmpty || isComparing}
               aria-label="Compare prices across stores"
             >
-              {isComparing ? "Comparing Prices..." : "Compare Prices →"}
+              {isComparing
+                ? "Comparing Prices..."
+                : pricingMode === "user_contributed"
+                ? "Compare User-Entered Prices →"
+                : "Compare Demonstration Prices →"}
             </button>
           </div>
         </>

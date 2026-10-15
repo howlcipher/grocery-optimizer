@@ -5,11 +5,15 @@ import { formatCents } from "../lib/money";
 interface ComparisonResultsProps {
   comparison: ComparisonResponse;
   onBackToList: () => void;
+  onSwitchSource?: (source: "demonstration" | "user_contributed") => void;
+  isSwitching?: boolean;
 }
 
 export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
   comparison,
   onBackToList,
+  onSwitchSource,
+  isSwitching = false,
 }) => {
   const { one_store_plan, best_plan, savings_cents, additional_stops } = comparison;
 
@@ -27,7 +31,7 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <button
           type="button"
           className="btn btn-secondary touch-target"
@@ -36,6 +40,43 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
         >
           ← Edit List
         </button>
+
+        {/* Pricing Source Toggle */}
+        {onSwitchSource && (
+          <div className="source-toggle-group" role="group" aria-label="Pricing source selector">
+            <button
+              type="button"
+              className={`source-toggle-btn ${comparison.pricing_source === "demonstration" ? "active" : ""}`}
+              onClick={() => onSwitchSource("demonstration")}
+              disabled={isSwitching || comparison.pricing_source === "demonstration"}
+            >
+              Demo Data
+            </button>
+            <button
+              type="button"
+              className={`source-toggle-btn ${comparison.pricing_source === "user_contributed" ? "active" : ""}`}
+              onClick={() => onSwitchSource("user_contributed")}
+              disabled={isSwitching || comparison.pricing_source === "user_contributed"}
+            >
+              User Observations
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Data Source Provenance Notice */}
+      <div className={`consumer-notice-box ${comparison.is_demonstration ? "demo-notice" : "user-notice"}`} style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span className={`provenance-pill ${comparison.is_demonstration ? "pill-demo" : "pill-user"}`}>
+            {comparison.pricing_source_label || (comparison.is_demonstration ? "Demonstration Prices" : "User-Entered Observations")}
+          </span>
+        </div>
+        <p style={{ marginTop: 6, fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+          {comparison.data_notice ||
+            (comparison.is_demonstration
+              ? "Prices shown are demonstration sample data from the mission seeder for feature testing."
+              : "Prices are user-entered observations. Missing observation data does not mean stores lack this item. Never mixed with synthetic data.")}
+        </p>
       </div>
 
       {/* Unfulfillable Basket Warning */}
@@ -43,7 +84,9 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
         <div className="alert-box alert-error" role="alert">
           <h3 style={{ fontWeight: 700, marginBottom: 6 }}>No Complete Shopping Plan Found</h3>
           <p>
-            We couldn't find a complete plan. These items aren't available at any combination of up to two stores:
+            {comparison.is_demonstration
+              ? "We couldn't find a complete plan. These items aren't available at any combination of up to two stores:"
+              : "We couldn't find a complete plan using user-recorded observations. These items have no recorded prices for any combination of up to two stores:"}
           </p>
           <ul style={{ marginTop: 8, paddingLeft: 20 }}>
             {best_plan.missing_products.map((p) => (
@@ -52,6 +95,11 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
               </li>
             ))}
           </ul>
+          {!comparison.is_demonstration && (
+            <p style={{ marginTop: 8, fontSize: "0.85rem", fontStyle: "italic" }}>
+              Shoppers can record shelf prices for missing items to enable full basket comparison. Missing data does not mean stores do not stock the item.
+            </p>
+          )}
         </div>
       )}
 
