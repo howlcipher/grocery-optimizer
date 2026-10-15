@@ -115,17 +115,38 @@ An independent technical reviewer subagent was invoked (`4d881ef2-c28a-4fa3-82be
 
 ---
 
-## 5. Next Mission Specification
+## 5. Next Mission Specification & Feasibility Status
 
-`docs/MISSION_002.md` has been authored and verified:
-- **Title**: Mission 002 — Official Kroger API Integration
-- **Objective**: Implement `KrogerProvider` behind `RetailerProvider` boundary for live store discovery and product pricing via official Kroger Developer API.
-- **Predecessor**: Mission 001 accepted.
-- **Rule**: Generated per framework contract; execution is deferred to outer Factory orchestration.
+`docs/MISSION_002.md` has been thoroughly audited and revised:
+- **Title**: Mission 002 — Retail Pricing Integration & Feasibility Architecture
+- **Objective**: Implement `KrogerProvider` behind `RetailerProvider` boundary with strict compliance to developer terms, zero-persistence caching, rate limit resilience, and non-misleading pricing guardrails.
+- **Feasibility Verdict**: **BLOCKED** for direct cross-retailer competitive comparison via Public API pending explicit Kroger Developer Partner authorization.
+- **Permitted Alternate Pathways**: Pathway A (Intra-Kroger Multi-Store Optimizer across Kroger brand banners), Pathway B (Open Product Data + User-Entered/Crowdsourced Pricing), or Pathway C (Licensed Commercial Retail Aggregator).
 
 ---
 
-## 6. How to Resume or Run
+## 6. Mission 001 Release Validation & CI Evidence
+
+During release validation of `agy/mission-001`:
+1. **Root Scoping Fix**: Discovered `.gitignore:13:lib/` had inadvertently ignored `frontend/src/lib/` (`money.ts` and `storage.ts`), causing the initial remote CI run to fail. Fixed `.gitignore` root scoping to `/lib/` and committed the missing helpers.
+2. **Mobile Responsiveness Fix**: Conducted mobile viewport testing (375x812) and identified text clipping in the header and the store breakdown table. Added responsive media queries in `frontend/src/index.css` to ensure full responsiveness across mobile viewports.
+3. **GitHub Actions CI Evidence**:
+   - Run ID: [38748910368](https://github.com/howlcipher/grocery-optimizer/actions/runs/38748910368)
+   - Status: **ALL JOBS PASSED (Green)**
+   - Frontend Lint, Types, Tests & Build: PASSED (27s)
+   - Backend Lint, Types & Tests: PASSED (37s)
+4. **Browser Verification Suite**:
+   - Automated via Playwright Chromium (`verify_browser.py`).
+   - Desktop consumer workflow (1280x800): 100% pass (keyboard navigation, list rename, search autocomplete, quantity controls, side-by-side comparison cards, back navigation, saved lists drawer).
+   - Mobile consumer workflow (375x812): 100% pass (touch targets >= 44px, zero horizontal scrolling, responsive grid card stacking, legible item breakdown).
+   - Unfulfillable basket alert: 100% pass (clear missing product explanation).
+5. **Pull Request**:
+   - Pull Request [#1](https://github.com/howlcipher/grocery-optimizer/pull/1) created targeting `main`: `feat(mission-001): First Consumer Vertical Slice (Catalog, List, Optimizer, UI)`.
+   - **Merge Policy**: Preserved on branch `agy/mission-001`; will NOT merge without explicit user authorization.
+
+---
+
+## 7. How to Resume or Run
 
 ### Running Backend
 ```bash
