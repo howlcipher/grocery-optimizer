@@ -374,5 +374,75 @@ Access UI at `http://localhost:5173`.
 
 ---
 
+## 11. AGY Mission 005 Handoff & Progress Journal
 
+- **Active Agent**: AGY
+- **Mission**: Mission 005 — Personal Staples, Repeat Shopping & Purchase History
+- **Campaign**: `2026-09-27-continuous-improvement`
+- **Branch**: `agy/mission-005`
+- **Base Commit**: `fb42f54`
+- **Status**: MISSION 005 COMPLETE AND VERIFIED (Awaiting Acceptance / PR Review)
 
+### 11.1 Delivered Capabilities & Architecture
+
+1. **Gate 0: Receipt Data Integrity Defect Resolution (`GO-013`, `GO-014`, `GO-015`, `GO-016`)**:
+   - **Defect A Fix (`GO-013`, P1)**: In `frontend/src/lib/receiptParser.ts` and `frontend/src/components/RecordPriceModal.tsx`, street address parsing was decoupled from city parsing. Store address (`parsed.address`) is no longer mistakenly assigned to `storeCity`, preserving distinct `storeAddress`, `storeCity`, `storeState`, and `storeZip` fields.
+   - **Defect B Fix (`GO-014`, P1)**: Receipt parsing now filters tender change, order-level discounts, payment noise, negative tax adjustments, and card refunds via `ORDER_LEVEL_NOISE_REGEX`. Sub-item line discounts are validated against the immediate item price and rejected if the discount exceeds 90% of item value, eliminating corrupted price observations.
+   - **Defect C Fix (`GO-015`, P2)**: When receipt OCR fails to recognize an explicit transaction date, `receiptParser.ts` returns `date: null` and `hasRecognizedDate: false`. `RecordPriceModal.tsx` surfaces an unconfirmed date banner and requires the shopper to verify or adjust the date before submission.
+   - **Defect D Fix (`GO-016`, P2)**: Multi-quantity line total ambiguity resolved via `MULTI_QTY_REGEX` (e.g. `2 @ $2.50` or `3 / $6.00`). Unit price is computed and stored as integer cents, preventing line-item totals from corrupting canonical unit prices.
+
+2. **Phase 1: Personal Staples Management**:
+   - Built client-side `StaplesManager` in `frontend/src/lib/storage.ts` storing data under `grocery_optimizer_staples`.
+   - Supports bookmarking/starring products (`☆`/`★`) in `ProductSearch.tsx`, `GroceryList.tsx`, and `ProductPricesModal.tsx`.
+   - Created `frontend/src/components/StaplesDrawer.tsx` accessible via `⭐ My Staples (${staplesCount})` in the header.
+   - Allows shoppers to configure preferred quantities (1..99), view price movement, and remove staples.
+
+3. **Phase 2: One-Tap Weekly Grocery Lists & List Reuse**:
+   - Added `⭐ Add Staples (${staplesCount})` button in `frontend/src/components/GroceryList.tsx` for one-click basket assembly.
+   - Quantity preservation: restoring staples to an existing list sets items to at least their preferred staple quantity without accidental multiplicative inflation.
+   - Guardrails: 1..99 item quantity limits and 100-item maximum basket size enforced.
+   - List cloning: added `📋 Clone` button to `frontend/src/components/SavedListsDrawer.tsx` (`handleCloneList`) allowing shoppers to duplicate and edit previous trips without overwriting saved templates.
+
+4. **Phase 3: Purchase History & Post-Trip Learning**:
+   - Local-first trip history stored in `localStorage` under `grocery_optimizer_purchase_history` via `savePurchaseHistory()` and `getPurchaseHistory()`.
+   - Created `frontend/src/components/PostTripStaplesModal.tsx`: after confirming a shopping trip or receipt batch, prompts shopper with *"Trip Recorded! Save to My Staples?"*, displaying unstared items with checkboxes and quantity pickers.
+   - Added `🧾 Purchase History` tab to `SavedListsDrawer.tsx` allowing consumers to review past shopping trips, see store visited, item counts, and total integer-cent expenditure, with a one-tap `+ Re-add All Items to List` action.
+
+5. **Phase 4: Observed Price Trends**:
+   - Implemented `computeProductPriceTrend()` in `frontend/src/lib/priceTrends.ts` analyzing canonical same-store price movement over 30-day and 90-day windows.
+   - Truthful metrics: computes exact integer-cent differences and percent changes. If observations exist at multiple stores or fewer than two observations exist at the preferred store, explicitly displays `insufficient_data` or `no_data` rather than synthesizing fictitious regional trends.
+   - Visual trend badges integrated in `StaplesDrawer.tsx` (`↓ $0.20`, `↑ $0.15`, `No change`, `Needs more data`).
+
+6. **Phase 5: Catalog Search Benchmark & Scaling (`GO-002`)**:
+   - Benchmark script `backend/tests/benchmark_catalog_search.py` evaluates in-memory search across 17 seed items, 1,000 synthetic items, and 10,000 synthetic items.
+   - Added `@lru_cache(maxsize=32768)` to `normalize_text` in `backend/app/catalog/search.py`, boosting throughput by >2.5x:
+     - 17 items: 60.4 µs (16,552 QPS)
+     - 1,000 items: 4.80 ms (208 QPS)
+     - 10,000 items: 47.86 ms (20 QPS)
+   - Evaluated that pure in-memory search is superior to database queries for catalogs under 10,000 items, keeping response times well under the 75ms interactive budget.
+
+### 11.2 Verification Evidence & Test Statistics
+
+| Suite / Gate | Tool / Runner | Result | Notes |
+| :--- | :--- | :--- | :--- |
+| Backend Tests | `pytest` | **57 passed** (3.78s) | 56 baseline + 1 catalog search scaling benchmark |
+| Backend Lint | `ruff check` | **0 errors** (Clean) | All backend files clean |
+| Backend Types | `mypy` | **0 errors** | Domain, catalog, and routes clean |
+| Frontend Tests | `vitest` | **37 passed** (9 suites) | 22 baseline + 4 Gate 0 defect tests + 5 price trend tests + 4 staples tests + 2 storage tests |
+| Frontend Types | `tsc --noEmit` | **0 errors** | Strict typing clean |
+| Frontend Lint | `eslint` | **0 errors, 0 warnings** | Clean |
+| Production Build | `vite build` | **Built in 1.80s** | Clean dist bundle (dist/assets/index-*.js, 82 kB gzipped) |
+| Browser E2E Suite | Playwright Chromium | **100% Pass** | Full E2E coverage across desktop & mobile viewports |
+| Visual Screenshots | Playwright | **7 captured** | Saved in `docs/images/mission-005/` |
+
+### 11.3 Captured Visual Artifacts
+
+1. `docs/images/mission-005/01-empty-list-quick-add-staples.png`: Empty list with prominent `Add Staples` button.
+2. `docs/images/mission-005/02-starring-staples-in-search.png`: Product search with live star/bookmark icons.
+3. `docs/images/mission-005/03-my-staples-drawer.png`: "My Staples" drawer with preferred quantities, price trends, and bulk add.
+4. `docs/images/mission-005/04-one-tap-staples-added.png`: Active grocery list assembled in one tap with preferred quantities.
+5. `docs/images/mission-005/05-saved-lists-drawer-clone.png`: Saved lists drawer with `📋 Clone` list action and purchase history tab.
+6. `docs/images/mission-005/06-post-trip-staples-learning.png`: Post-trip prompt to learn staples from confirmed trip items.
+7. `docs/images/mission-005/07-mobile-staples-drawer.png`: Mobile viewport (390x844) validating accessible touch targets ($\ge 44$px).
+
+---

@@ -11,6 +11,10 @@ interface GroceryListProps {
   onCompareProductPrices?: (product: Product) => void;
   onRecordPriceForProduct?: (product: Product) => void;
   isComparing: boolean;
+  onAddStaplesToList?: () => void;
+  staplesCount?: number;
+  isProductStaple?: (productId: string) => boolean;
+  onToggleStaple?: (productId: string) => void;
 }
 
 export const GroceryList: React.FC<GroceryListProps> = ({
@@ -22,6 +26,10 @@ export const GroceryList: React.FC<GroceryListProps> = ({
   onCompareProductPrices,
   onRecordPriceForProduct,
   isComparing,
+  onAddStaplesToList,
+  staplesCount,
+  isProductStaple,
+  onToggleStaple,
 }) => {
   const [listName, setListName] = useState(list.name || "My Grocery List");
   const [pricingMode, setPricingMode] = useState<"demonstration" | "user_contributed">("demonstration");
@@ -65,15 +73,29 @@ export const GroceryList: React.FC<GroceryListProps> = ({
             aria-label="Grocery list name"
           />
         </div>
-        <span
-          style={{
-            fontSize: "0.875rem",
-            color: "var(--color-text-muted)",
-            fontWeight: 500,
-          }}
-        >
-          {list.items.length} {list.items.length === 1 ? "item" : "items"}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {onAddStaplesToList && staplesCount !== undefined && staplesCount > 0 && (
+            <button
+              type="button"
+              className="btn btn-secondary touch-target"
+              onClick={onAddStaplesToList}
+              style={{ fontSize: "0.85rem", height: 34, padding: "0 10px" }}
+              title="Populate missing staples with preferred quantities"
+              aria-label="Add staples to grocery list"
+            >
+              ⭐ Add Staples ({staplesCount})
+            </button>
+          )}
+          <span
+            style={{
+              fontSize: "0.875rem",
+              color: "var(--color-text-muted)",
+              fontWeight: 500,
+            }}
+          >
+            {list.items.length} {list.items.length === 1 ? "item" : "items"}
+          </span>
+        </div>
       </div>
 
       {isEmpty ? (
@@ -85,6 +107,19 @@ export const GroceryList: React.FC<GroceryListProps> = ({
             Your grocery list is empty
           </h3>
           <p>Search for groceries above to start finding the cheapest stores.</p>
+          {onAddStaplesToList && staplesCount !== undefined && staplesCount > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn btn-primary touch-target"
+                onClick={onAddStaplesToList}
+                style={{ padding: "10px 18px", fontSize: "0.95rem", fontWeight: 700 }}
+                aria-label="Add staples to empty list"
+              >
+                ⭐ Add My Staples ({staplesCount}) to List
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -92,7 +127,29 @@ export const GroceryList: React.FC<GroceryListProps> = ({
             {list.items.map((item: GroceryItem) => (
               <li key={item.id} className="item-row">
                 <div className="item-info">
-                  <div className="item-name">{item.product.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {onToggleStaple && (
+                      <button
+                        type="button"
+                        className="touch-target star-btn"
+                        onClick={() => onToggleStaple(item.product.id)}
+                        aria-label={isProductStaple && isProductStaple(item.product.id) ? `Remove ${item.product.name} from staples` : `Add ${item.product.name} to staples`}
+                        title={isProductStaple && isProductStaple(item.product.id) ? "In My Staples" : "Add to My Staples"}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          fontSize: "1.25rem",
+                          cursor: "pointer",
+                          padding: "0 2px",
+                          lineHeight: 1,
+                          color: isProductStaple && isProductStaple(item.product.id) ? "#f59e0b" : "#94a3b8",
+                        }}
+                      >
+                        {isProductStaple && isProductStaple(item.product.id) ? "★" : "☆"}
+                      </button>
+                    )}
+                    <div className="item-name">{item.product.name}</div>
+                  </div>
                   <div className="item-meta">
                     {item.product.brand} • {item.product.package_quantity}{" "}
                     {item.product.package_unit}

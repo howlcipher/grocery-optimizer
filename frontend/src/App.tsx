@@ -6,11 +6,15 @@ import { ComparisonResults } from "./components/ComparisonResults";
 import { SavedListsDrawer } from "./components/SavedListsDrawer";
 import { RecordPriceModal } from "./components/RecordPriceModal";
 import { ProductPricesModal } from "./components/ProductPricesModal";
+import { StaplesDrawer } from "./components/StaplesDrawer";
+import { PostTripStaplesModal, CandidateStapleItem } from "./components/PostTripStaplesModal";
 import {
   ComparisonResponse,
   GroceryList as GroceryListType,
   PriceObservation,
   Product,
+  StapleItem,
+  PurchaseHistoryRecord,
 } from "./types";
 import { api } from "./api/client";
 import {
@@ -21,6 +25,11 @@ import {
   saveListMetadata,
   setActiveListId,
   setSelectedZipCode,
+  getStaples,
+  isStaple,
+  toggleStaple,
+  setStapleQuantity,
+  addOrUpdateStaple,
 } from "./lib/storage";
 
 export const App: React.FC = () => {
@@ -41,6 +50,21 @@ export const App: React.FC = () => {
   const [editingObservation, setEditingObservation] = useState<PriceObservation | null>(null);
   const [isPricesModalOpen, setIsPricesModalOpen] = useState(false);
   const [pricesModalProduct, setPricesModalProduct] = useState<Product | null>(null);
+
+  // Staples state
+  const [isStaplesDrawerOpen, setIsStaplesDrawerOpen] = useState(false);
+  const [staples, setStaples] = useState<StapleItem[]>(getStaples());
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
+  const [isPostTripModalOpen, setIsPostTripModalOpen] = useState(false);
+  const [postTripCandidates, setPostTripCandidates] = useState<CandidateStapleItem[]>([]);
+
+  const refreshStaples = useCallback(() => {
+    setStaples(getStaples());
+  }, []);
+
+  useEffect(() => {
+    api.getProducts(100).then(setCatalogProducts).catch(() => {});
+  }, []);
 
   const refreshSavedLists = useCallback(() => {
     setSavedLists(getSavedLists());
@@ -209,6 +233,144 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleToggleStaple = (productId: string) => {
+    toggleStaple(productId);
+    refreshStaples();
+  };
+
+  const handleUpdateStapleQuantity = (productId: string, qty: number) => {
+    setStapleQuantity(productId, qty);
+    refreshStaples();
+  };
+
+  const handleAddStapleToList = async (productId: string, quantity: number) => {
+    if (!list) return;
+    setError(null);
+    try {
+      const existing = list.items.find((it) => it.product.id === productId);
+      let updated: GroceryListType;
+      if (existing) {
+        const newQty = Math.min(99, Math.max(existing.quantity, quantity));
+        updated = await api.updateItemQuantity(list.id, existing.id, newQty);
+      } else {
+        if (list.items.length >= 100) {
+          setError("Grocery list has reached the maximum of 100 items.");
+          return;
+        }
+        updated = await api.addItem(list.id, productId, Math.max(1, Math.min(99, quantity)));
+      }
+      setList(updated);
+      saveListMetadata(updated.id, updated.name || "My Grocery List");
+      refreshSavedLists();
+      if (comparison) setComparison(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to add staple to list");
+    }
+  };
+
+  const handleAddAllStaplesToList = async () => {
+    if (!list) return;
+    const currentStaples = getStaples();
+    if (currentStaples.length === 0) return;
+
+    setError(null);
+    setIsLoading(true);
+    try {
+      let currentList = list;
+      for (const staple of currentStaples) {
+        const existing = currentList.items.find((it) => it.product.id === staple.product_id);
+        if (existing) {
+          if (existing.quantity < staple.preferred_quantity) {
+            currentList = await api.updateItemQuantity(currentList.id, existing.id, staple.preferred_quantity);
+          }
+        } else {
+          if (currentList.items.length >= 100) {
+            setError("Grocery list limit reached (100 items). Some staples were not added.");
+            break;
+          }
+          currentList = await api.addItem(currentList.id, staple.product_id, staple.preferred_quantity);
+        }
+      }
+      setList(currentList);
+      saveListMetadata(currentList.id, currentList.name || "My Grocery List");
+      refreshSavedLists();
+      if (comparison) setComparison(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to add staples to list");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCloneList = async (sourceListId: string) => {
+    setError(null);
+    setIsLoading(true);
+    try {
+      const sourceList = await api.getList(sourceListId);
+      const clonedName = `${sourceList.name || "Grocery List"} (Copy)`;
+      let newList = await api.createList(clonedName);
+
+      for (const item of sourceList.items) {
+        newList = await api.addItem(newList.id, item.product.id, item.quantity);
+      }
+
+      setList(newList);
+      setActiveListId(newList.id);
+      saveListMetadata(newList.id, newList.name || clonedName);
+      refreshSavedLists();
+      setComparison(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to clone list");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLoadTripIntoList = async (trip: PurchaseHistoryRecord) => {
+    if (!list) return;
+    setError(null);
+    setIsLoading(true);
+    try {
+      let currentList = list;
+      for (const item of trip.items) {
+        const existing = currentList.items.find((it) => it.product.id === item.product_id);
+        if (existing) {
+          const newQty = Math.min(99, existing.quantity + (item.quantity || 1));
+          currentList = await api.updateItemQuantity(currentList.id, existing.id, newQty);
+        } else {
+          if (currentList.items.length >= 100) {
+            setError("List limit reached (100 items). Some trip items were not added.");
+            break;
+          }
+          currentList = await api.addItem(currentList.id, item.product_id, item.quantity || 1);
+        }
+      }
+      setList(currentList);
+      saveListMetadata(currentList.id, currentList.name || "My Grocery List");
+      refreshSavedLists();
+      if (comparison) setComparison(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to add trip items to list");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleTripSaved = (items: CandidateStapleItem[]) => {
+    const unstarred = items.filter((it) => !isStaple(it.product_id));
+    if (unstarred.length > 0) {
+      setPostTripCandidates(unstarred);
+      setIsPostTripModalOpen(true);
+    }
+  };
+
+  const handleSavePostTripStaples = (selected: { product_id: string; quantity: number }[]) => {
+    for (const item of selected) {
+      addOrUpdateStaple(item.product_id, item.quantity);
+    }
+    refreshStaples();
+  };
+
   const handleOpenRecordPriceModal = (product?: Product | null, editObs?: PriceObservation | null) => {
     setRecordModalProduct(product || null);
     setEditingObservation(editObs || null);
@@ -227,6 +389,8 @@ export const App: React.FC = () => {
         onNewList={handleNewList}
         savedListsCount={savedLists.length}
         onOpenRecordPrice={() => handleOpenRecordPriceModal(null, null)}
+        onOpenStaples={() => setIsStaplesDrawerOpen(true)}
+        staplesCount={staples.length}
       />
 
       <main className="main-content">
@@ -251,7 +415,11 @@ export const App: React.FC = () => {
           />
         ) : list ? (
           <>
-            <ProductSearch onSelectProduct={handleSelectProduct} />
+            <ProductSearch
+              onSelectProduct={handleSelectProduct}
+              isProductStaple={isStaple}
+              onToggleStaple={handleToggleStaple}
+            />
             <GroceryList
               list={list}
               onUpdateListName={handleUpdateListName}
@@ -264,6 +432,10 @@ export const App: React.FC = () => {
               onCompareProductPrices={handleOpenProductPricesModal}
               onRecordPriceForProduct={(prod) => handleOpenRecordPriceModal(prod, null)}
               isComparing={isComparing}
+              onAddStaplesToList={handleAddAllStaplesToList}
+              staplesCount={staples.length}
+              isProductStaple={isStaple}
+              onToggleStaple={handleToggleStaple}
             />
           </>
         ) : null}
@@ -276,7 +448,21 @@ export const App: React.FC = () => {
         activeListId={list?.id || null}
         onSelectList={handleSelectList}
         onDeleteList={handleDeleteSavedList}
+        onCloneList={handleCloneList}
         onNewList={handleNewList}
+        onLoadTripIntoList={handleLoadTripIntoList}
+      />
+
+      <StaplesDrawer
+        isOpen={isStaplesDrawerOpen}
+        onClose={() => setIsStaplesDrawerOpen(false)}
+        staples={staples}
+        catalogProducts={catalogProducts}
+        onToggleStaple={handleToggleStaple}
+        onUpdateStapleQuantity={handleUpdateStapleQuantity}
+        onAddStapleToList={handleAddStapleToList}
+        onAddAllStaplesToList={handleAddAllStaplesToList}
+        referenceStoreName={comparison?.best_plan.stores[0]?.name || null}
       />
 
       <RecordPriceModal
@@ -285,6 +471,7 @@ export const App: React.FC = () => {
           setIsRecordModalOpen(false);
           setRecordModalProduct(null);
           setEditingObservation(null);
+          refreshStaples();
         }}
         initialProduct={recordModalProduct}
         initialStoreName={editingObservation?.store_name || ""}
@@ -294,10 +481,19 @@ export const App: React.FC = () => {
         initialPromotional={editingObservation?.is_promotional || false}
         editingObservationId={editingObservation?.id || null}
         onSaved={() => {
+          refreshStaples();
           if (comparison && comparisonSource === "user_contributed") {
             handleComparePrices("user_contributed", selectedZipCode);
           }
         }}
+        onTripSaved={handleTripSaved}
+      />
+
+      <PostTripStaplesModal
+        isOpen={isPostTripModalOpen}
+        onClose={() => setIsPostTripModalOpen(false)}
+        items={postTripCandidates}
+        onSaveStaples={handleSavePostTripStaples}
       />
 
       <ProductPricesModal
@@ -311,6 +507,8 @@ export const App: React.FC = () => {
           setIsPricesModalOpen(false);
           handleOpenRecordPriceModal(prod, editObs || null);
         }}
+        isProductStaple={isStaple}
+        onToggleStaple={handleToggleStaple}
       />
     </div>
   );

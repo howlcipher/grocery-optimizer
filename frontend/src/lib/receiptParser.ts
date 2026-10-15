@@ -199,6 +199,19 @@ export function matchCanonicalProduct(
   };
 }
 
+function toTitleCase(str: string): string {
+  return str
+    .toLowerCase()
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// Transaction-level / order-wide non-item noise (must be excluded before item discounts)
+const ORDER_LEVEL_NOISE_REGEX =
+  /\b(TOTAL\s*SAVINGS|ORDER\s*SAVINGS|RECEIPT\s*SAVINGS|SAVED\s*TODAY|TAX\s*ADJUSTMENT|CHANGE\s*DUE|\bCHANGE\b|REFUND|\bTENDER\b|CASH\s*BACK|STORE\s*COUPON|COUPON\s*TOTAL|BALANCE|TOTAL\s*DUE|AMOUNT\s*DUE)\b/i;
+
 /**
  * Deterministically parse raw OCR receipt text into structured receipt draft.
  */
@@ -211,6 +224,8 @@ export function parseReceiptText(text: string, canonicalProducts: Product[]): Pa
   let storeName: string | null = null;
   let receiptDate: string | null = null;
   let address: string | null = null;
+  let city: string | null = null;
+  let state: string | null = null;
   let zipCode: string | null = null;
   const items: ParsedReceiptItem[] = [];
   const ignoredLines: string[] = [];
@@ -246,8 +261,20 @@ export function parseReceiptText(text: string, canonicalProducts: Product[]): Pa
     }
 
     // Check for street address (e.g. 123 Main St, 36865 26 Mile Rd)
-    if (!address && i < 15 && /\b\d+\s+([A-Za-z0-9.]+\s+)+(Rd|Road|St|Street|Ave|Avenue|Blvd|Hwy|Pkwy|Mile)\b/i.test(line)) {
+    if (!address && i < 15 && /\b\d+\s+([A-Za-z0-9.]+\s+)+(Rd|Road|St|Street|Ave|Avenue|Blvd|Hwy|Pkwy|Mile|Dr|Drive|Way|Ct|Court)\b/i.test(line)) {
       address = line;
+    }
+
+    // Check for city, state, and zip line (e.g. "LENOX, MI 48042" or "ROCHESTER HILLS, MI")
+    if (!city && i < 15) {
+      const cityStateMatch = line.match(/\b([A-Za-z\s.]+),\s*([A-Z]{2})\b(?:\s*(\d{5}))?/i);
+      if (cityStateMatch) {
+        city = toTitleCase(cityStateMatch[1].trim());
+        state = cityStateMatch[2].toUpperCase();
+        if (cityStateMatch[3] && !zipCode) {
+          zipCode = cityStateMatch[3];
+        }
+      }
     }
 
     // Check for receipt date
@@ -271,33 +298,43 @@ export function parseReceiptText(text: string, canonicalProducts: Product[]): Pa
       continue;
     }
 
-    // Check if line is a discount modifying the previous product
+    // Exclude transaction noise, tender, refunds, and order-level totals first (Defect B / GO-014)
+    if (ORDER_LEVEL_NOISE_REGEX.test(line) || TRANSACTION_NOISE_REGEX.test(line)) {
+      ignoredLines.push(`[Transaction Metadata Excluded] ${line}`);
+      continue;
+    }
+
+    // Check if line is an item-specific discount modifying the previous product
     const discountMatch = line.match(DISCOUNT_REGEX);
     if (discountMatch && items.length > 0) {
       const discountCents = Math.round(parseFloat(discountMatch[1]) * 100);
       const prevItem = items[items.length - 1];
-      prevItem.isPromotional = true;
-      if (prevItem.priceCents > discountCents) {
-        prevItem.priceCents -= discountCents;
-      }
-      ignoredLines.push(`[Promotional Discount Applied] ${line}`);
-      continue;
-    }
 
-    // Exclude noise / totals / tender lines
-    if (TRANSACTION_NOISE_REGEX.test(line)) {
-      ignoredLines.push(`[Transaction Metadata Excluded] ${line}`);
-      continue;
+      // Item discounts must be smaller than the item's price, and cannot be an order-level noise line
+      const isItemDiscount =
+        /^(?:SC|SALE|SAVINGS|DISCOUNT|MFR\s*COUPON|COUPON|ITEM\s*DISC|MD)\b/i.test(line) ||
+        line.startsWith("-") ||
+        line.startsWith("-$");
+
+      if (isItemDiscount && discountCents < prevItem.priceCents) {
+        prevItem.isPromotional = true;
+        prevItem.priceCents -= discountCents;
+        ignoredLines.push(`[Promotional Discount Applied] ${line}`);
+        continue;
+      } else {
+        ignoredLines.push(`[Transaction Discount Excluded] ${line}`);
+        continue;
+      }
     }
 
     // Check for product line with price
     const priceMatch = line.match(PRICE_REGEX);
     if (priceMatch) {
       const priceStr = priceMatch[1];
-      const priceCents = Math.round(parseFloat(priceStr) * 100);
+      let priceCents = Math.round(parseFloat(priceStr) * 100);
 
       // Clean item description by removing the price and trailing tax codes
-      const itemDesc = line.replace(PRICE_REGEX, "").trim();
+      let itemDesc = line.replace(PRICE_REGEX, "").trim();
 
       // Skip lines that have no description or are pure digits
       if (!itemDesc || /^\d+$/.test(itemDesc) || priceCents <= 0 || priceCents > 50000) {
@@ -305,11 +342,35 @@ export function parseReceiptText(text: string, canonicalProducts: Product[]): Pa
         continue;
       }
 
-      // Check for quantity multiplier on previous line or in desc (e.g. 2 @ 1.99)
       let quantity = 1;
-      const qtyMatch = itemDesc.match(/^(\d+)\s*[@x]\s*/i);
-      if (qtyMatch) {
-        quantity = parseInt(qtyMatch[1], 10);
+
+      // Check for multi-quantity with explicit unit price e.g. "2 @ 1.99" or "2 @ $1.99" (Defect D / GO-016)
+      const multiQtyMatch = itemDesc.match(/(\d+)\s*[@x]\s*\$?([0-9]+\.[0-9]{2})/i);
+      if (multiQtyMatch) {
+        quantity = parseInt(multiQtyMatch[1], 10);
+        const unitPriceCents = Math.round(parseFloat(multiQtyMatch[2]) * 100);
+        if (unitPriceCents > 0) {
+          priceCents = unitPriceCents;
+        }
+        itemDesc = itemDesc.replace(/(\d+)\s*[@x]\s*\$?([0-9]+\.[0-9]{2})/i, "").trim();
+      } else {
+        // Check for "2 FOR 3.00"
+        const forQtyMatch = itemDesc.match(/(\d+)\s*FOR\s*\$?([0-9]+\.[0-9]{2})/i);
+        if (forQtyMatch) {
+          quantity = parseInt(forQtyMatch[1], 10);
+          const totalCents = Math.round(parseFloat(forQtyMatch[2]) * 100);
+          if (quantity > 0 && totalCents > 0) {
+            priceCents = Math.round(totalCents / quantity);
+          }
+          itemDesc = itemDesc.replace(/(\d+)\s*FOR\s*\$?([0-9]+\.[0-9]{2})/i, "").trim();
+        } else {
+          // Check for simple leading quantity e.g. "2x WHOLE MILK"
+          const leadingQtyMatch = itemDesc.match(/^(\d+)\s*[@x]\s*/i);
+          if (leadingQtyMatch) {
+            quantity = parseInt(leadingQtyMatch[1], 10);
+            itemDesc = itemDesc.replace(/^(\d+)\s*[@x]\s*/i, "").trim();
+          }
+        }
       }
 
       const matchResult = matchCanonicalProduct(itemDesc, canonicalProducts);
@@ -329,15 +390,16 @@ export function parseReceiptText(text: string, canonicalProducts: Product[]): Pa
     }
   }
 
-  // Fallback date to today if none found
-  if (!receiptDate) {
-    receiptDate = new Date().toISOString().split("T")[0];
-  }
+  // Defect C (GO-015): Do NOT silently fall back to today's date if unrecognized
+  const hasRecognizedDate = receiptDate !== null;
 
   return {
     storeName,
     date: receiptDate,
+    hasRecognizedDate,
     address,
+    city,
+    state,
     zipCode,
     items,
     rawText: text,

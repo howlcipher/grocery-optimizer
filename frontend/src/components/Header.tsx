@@ -4,14 +4,18 @@ interface HeaderProps {
   onOpenSavedLists: () => void;
   onNewList: () => void;
   onOpenRecordPrice?: () => void;
+  onOpenStaples?: () => void;
   savedListsCount: number;
+  staplesCount?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onOpenSavedLists,
   onNewList,
   onOpenRecordPrice,
+  onOpenStaples,
   savedListsCount,
+  staplesCount = 0,
 }) => {
   return (
     <header className="app-header">
@@ -22,6 +26,16 @@ export const Header: React.FC<HeaderProps> = ({
         <span>Grocery Optimizer</span>
       </div>
       <div className="header-actions">
+        {onOpenStaples && (
+          <button
+            type="button"
+            className="btn btn-secondary touch-target"
+            onClick={onOpenStaples}
+            aria-label={`View My Staples (${staplesCount})`}
+          >
+            ⭐ My Staples ({staplesCount})
+          </button>
+        )}
         {onOpenRecordPrice && (
           <button
             type="button"

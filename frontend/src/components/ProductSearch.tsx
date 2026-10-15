@@ -5,11 +5,15 @@ import { api } from "../api/client";
 interface ProductSearchProps {
   onSelectProduct: (product: Product) => void;
   disabled?: boolean;
+  isProductStaple?: (productId: string) => boolean;
+  onToggleStaple?: (productId: string) => void;
 }
 
 export const ProductSearch: React.FC<ProductSearchProps> = ({
   onSelectProduct,
   disabled = false,
+  isProductStaple,
+  onToggleStaple,
 }) => {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<Product[]>([]);
@@ -147,15 +151,39 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
                     {prod.brand} • {prod.package_quantity} {prod.package_unit}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-secondary touch-target"
-                  style={{ height: 36, padding: "0 12px", fontSize: "0.875rem" }}
-                  tabIndex={-1}
-                  aria-label={`Add ${prod.name}`}
-                >
-                  + Add
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {onToggleStaple && (
+                    <button
+                      type="button"
+                      className="touch-target star-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleStaple(prod.id);
+                      }}
+                      aria-label={isProductStaple && isProductStaple(prod.id) ? `Remove ${prod.name} from staples` : `Add ${prod.name} to staples`}
+                      title={isProductStaple && isProductStaple(prod.id) ? "In My Staples" : "Add to My Staples"}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        fontSize: "1.25rem",
+                        cursor: "pointer",
+                        padding: "0 6px",
+                        color: isProductStaple && isProductStaple(prod.id) ? "#f59e0b" : "#94a3b8",
+                      }}
+                    >
+                      {isProductStaple && isProductStaple(prod.id) ? "★" : "☆"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-secondary touch-target"
+                    style={{ height: 36, padding: "0 12px", fontSize: "0.875rem" }}
+                    tabIndex={-1}
+                    aria-label={`Add ${prod.name}`}
+                  >
+                    + Add
+                  </button>
+                </div>
               </li>
             ))
           ) : searched && !isLoading ? (

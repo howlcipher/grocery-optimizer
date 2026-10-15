@@ -1,10 +1,12 @@
-import { SavedListMetadata, StoreResponse } from "../types";
+import { SavedListMetadata, StoreResponse, StapleItem, PurchaseHistoryRecord } from "../types";
 
 const SAVED_LISTS_KEY = "grocery_optimizer_saved_lists";
 const ACTIVE_LIST_ID_KEY = "grocery_optimizer_active_list_id";
 const OBSERVATION_TOKENS_KEY = "grocery_optimizer_observation_tokens";
 const RECENT_STORES_KEY = "grocery_optimizer_recent_stores";
 const SELECTED_ZIP_KEY = "grocery_optimizer_selected_zip";
+const STAPLES_KEY = "grocery_optimizer_staples";
+const PURCHASE_HISTORY_KEY = "grocery_optimizer_purchase_history";
 
 // --- Saved Lists Storage ---
 
@@ -184,3 +186,151 @@ export function setSelectedZipCode(zip: string | null): void {
     console.error("Failed to set selected ZIP:", e);
   }
 }
+
+// --- Staples Storage ---
+
+export function getStaples(): StapleItem[] {
+  try {
+    const raw = localStorage.getItem(STAPLES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (it) => typeof it === "object" && it !== null && typeof it.product_id === "string"
+      );
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStaples(staples: StapleItem[]): void {
+  try {
+    localStorage.setItem(STAPLES_KEY, JSON.stringify(staples));
+  } catch (e) {
+    console.error("Failed to save staples to localStorage:", e);
+  }
+}
+
+export function isStaple(productId: string): boolean {
+  if (!productId) return false;
+  const staples = getStaples();
+  return staples.some((s) => s.product_id === productId);
+}
+
+export function getStaple(productId: string): StapleItem | null {
+  if (!productId) return null;
+  const staples = getStaples();
+  return staples.find((s) => s.product_id === productId) || null;
+}
+
+export function addOrUpdateStaple(productId: string, preferredQuantity = 1, notes?: string): StapleItem {
+  const staples = getStaples();
+  const clampedQty = Math.max(1, Math.min(99, Math.round(preferredQuantity) || 1));
+  const existingIdx = staples.findIndex((s) => s.product_id === productId);
+  const now = new Date().toISOString();
+
+  if (existingIdx >= 0) {
+    staples[existingIdx] = {
+      ...staples[existingIdx],
+      preferred_quantity: clampedQty,
+      notes: notes !== undefined ? notes : staples[existingIdx].notes,
+      last_used_at: now,
+    };
+    saveStaples(staples);
+    return staples[existingIdx];
+  } else {
+    const newStaple: StapleItem = {
+      product_id: productId,
+      preferred_quantity: clampedQty,
+      created_at: now,
+      last_used_at: now,
+      notes: notes || undefined,
+    };
+    staples.unshift(newStaple);
+    saveStaples(staples);
+    return newStaple;
+  }
+}
+
+export function removeStaple(productId: string): void {
+  const staples = getStaples().filter((s) => s.product_id !== productId);
+  saveStaples(staples);
+}
+
+export function toggleStaple(productId: string, defaultQuantity = 1): boolean {
+  if (isStaple(productId)) {
+    removeStaple(productId);
+    return false;
+  } else {
+    addOrUpdateStaple(productId, defaultQuantity);
+    return true;
+  }
+}
+
+export function setStapleQuantity(productId: string, quantity: number): void {
+  const staples = getStaples();
+  const existingIdx = staples.findIndex((s) => s.product_id === productId);
+  if (existingIdx >= 0) {
+    const clampedQty = Math.max(1, Math.min(99, Math.round(quantity) || 1));
+    staples[existingIdx].preferred_quantity = clampedQty;
+    staples[existingIdx].last_used_at = new Date().toISOString();
+    saveStaples(staples);
+  }
+}
+
+// --- Purchase History Storage ---
+
+export function getPurchaseHistory(): PurchaseHistoryRecord[] {
+  try {
+    const raw = localStorage.getItem(PURCHASE_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePurchaseHistory(
+  record: Omit<PurchaseHistoryRecord, "id" | "recorded_at">
+): PurchaseHistoryRecord {
+  const history = getPurchaseHistory();
+  const now = new Date().toISOString();
+  const id = `trip-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const fullRecord: PurchaseHistoryRecord = {
+    ...record,
+    id,
+    recorded_at: now,
+  };
+
+  history.unshift(fullRecord);
+  try {
+    localStorage.setItem(PURCHASE_HISTORY_KEY, JSON.stringify(history.slice(0, 100)));
+  } catch (e) {
+    console.error("Failed to save purchase history to localStorage:", e);
+  }
+  return fullRecord;
+}
+
+export function deletePurchaseHistoryRecord(id: string): void {
+  const history = getPurchaseHistory().filter((h) => h.id !== id);
+  try {
+    localStorage.setItem(PURCHASE_HISTORY_KEY, JSON.stringify(history));
+  } catch (e) {
+    console.error("Failed to delete purchase history record:", e);
+  }
+}
+
+export function clearPurchaseHistory(): void {
+  try {
+    localStorage.removeItem(PURCHASE_HISTORY_KEY);
+  } catch (e) {
+    console.error("Failed to clear purchase history:", e);
+  }
+}
+
