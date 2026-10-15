@@ -19,8 +19,6 @@ from app.catalog.search import search_products
 from app.domain.models import (
     GroceryItem,
     Product,
-    ProductOffer,
-    Store,
 )
 from app.optimizer.engine import compare_shopping_plans
 from app.persistence.database import get_db
@@ -28,11 +26,16 @@ from app.persistence.models import (
     GroceryListItemModel,
     GroceryListModel,
     ProductModel,
-    ProductOfferModel,
-    StoreModel,
+    RetailerModel,
 )
+from app.providers.base import RetailerProvider
+from app.providers.mock import MockRetailerProvider
 
 router = APIRouter(prefix="/api")
+
+
+def get_retailer_provider(db: Session = Depends(get_db)) -> RetailerProvider:
+    return MockRetailerProvider(db=db)
 
 
 @router.get("/health", tags=["system"])
@@ -292,6 +295,7 @@ def remove_item_from_list(
 def compare_prices_for_list(
     list_id: str,
     db: Session = Depends(get_db),
+    provider: RetailerProvider = Depends(get_retailer_provider),
 ):
     """Compare stores and calculate cheapest 1-store and <=2-store shopping plans."""
     grocery_list = (
@@ -330,42 +334,21 @@ def compare_prices_for_list(
             upc=p.upc,
         )
 
-    # Load stores
-    store_models = db.query(StoreModel).options(joinedload(StoreModel.retailer)).all()
-    domain_stores: list[Store] = []
-    store_retailer_name_map: dict[str, str] = {}
-    for s in store_models:
-        domain_stores.append(
-            Store(
-                id=s.id,
-                retailer_id=s.retailer_id,
-                name=s.name,
-                slug=s.slug,
-                sort_order=s.sort_order,
-            )
-        )
-        store_retailer_name_map[s.id] = s.retailer.name if s.retailer else s.name
+    # Load stores via provider abstraction
+    domain_stores = provider.get_stores()
+    store_ids = [s.id for s in domain_stores]
 
-    # Load offers for requested items
+    # Map store to retailer display name for presentation
+    retailer_names = {r.id: r.name for r in db.query(RetailerModel).all()}
+    store_retailer_name_map = {
+        s.id: retailer_names.get(s.retailer_id, s.name) for s in domain_stores
+    }
+
+    # Load offers via provider abstraction
     requested_prod_ids = list(domain_products.keys())
-    offer_models = (
-        db.query(ProductOfferModel)
-        .filter(ProductOfferModel.product_id.in_(requested_prod_ids))
-        .all()
+    domain_offers = provider.get_offers(
+        product_ids=requested_prod_ids, store_ids=store_ids
     )
-    domain_offers: list[ProductOffer] = [
-        ProductOffer(
-            id=o.id,
-            retailer_id=o.retailer_id,
-            store_id=o.store_id,
-            product_id=o.product_id,
-            retailer_product_id=o.retailer_product_id,
-            regular_price_cents=o.regular_price_cents,
-            promotional_price_cents=o.promotional_price_cents,
-            is_available=o.is_available,
-        )
-        for o in offer_models
-    ]
 
     # Run pure optimizer
     result = compare_shopping_plans(

@@ -174,6 +174,15 @@ SEED_PRODUCTS: list[Product] = [
         aliases=["dragonfruit", "pitaya"],
         upc="099999000001",
     ),
+    Product(
+        id="prod-rolled-oats",
+        name="Old Fashioned Rolled Oats",
+        brand="Value Grain",
+        package_quantity="32",
+        package_unit="oz",
+        aliases=["oats", "oatmeal", "rolled oats"],
+        upc="077777000018",
+    ),
 ]
 
 SEED_OFFERS: list[ProductOffer] = [
@@ -249,6 +258,9 @@ SEED_OFFERS: list[ProductOffer] = [
 
     # Specialty Tea (Available ONLY at Fresh Basket Northside; missing at Riverside and Eastgate)
     ProductOffer("off-tea-n", "ret-fresh-basket", "store-fb-north", "prod-specialty-tea", "FB-TEA-01", 699, None, True),
+
+    # Rolled Oats (Available ONLY at Value Foods Eastgate; missing at Fresh Basket Northside and Riverside)
+    ProductOffer("off-oats-e", "ret-value-foods", "store-vf-east", "prod-rolled-oats", "VF-OAT-01", 349, None, True),
 
     # Dragonfruit (Offered only as unavailable across all stores -> unfulfillable scenario)
     ProductOffer("off-df-n", "ret-fresh-basket", "store-fb-north", "prod-dragonfruit", "FB-DF-01", 599, None, False),
