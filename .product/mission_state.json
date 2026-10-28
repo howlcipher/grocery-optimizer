@@ -3,7 +3,7 @@
   "campaign_id": "2026-09-27-continuous-improvement",
   "latest_completed_mission": "docs/MISSION_005.md",
   "next_mission": "docs/MISSION_006.md",
-  "status": "COMPLETE",
+  "status": "IN_PROGRESS",
   "open_findings": {
     "GO-002": {
       "severity": "P3",

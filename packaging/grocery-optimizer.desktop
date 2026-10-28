@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Grocery Optimizer
+GenericName=Grocery Price Hunter
+Comment=Eliminate repetitive price hunting between Kroger and Meijer
+Exec=grocery-optimizer
+Icon=grocery-optimizer
+Terminal=false
+Categories=Utility;Office;Finance;
+Keywords=grocery;kroger;meijer;prices;shopping;optimizer;
+StartupNotify=true
