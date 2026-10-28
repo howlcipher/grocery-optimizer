@@ -41,6 +41,16 @@ class Product:
     package_unit: str
     aliases: list[str] = field(default_factory=list)
     upc: str | None = None
+    category: str | None = None
+    canonical_group: str | None = None
+
+    @property
+    def unit_price_divisor(self) -> float | None:
+        """Return numeric package quantity for unit price calculation."""
+        try:
+            return float(self.package_quantity)
+        except (ValueError, TypeError):
+            return None
 
 
 @dataclass(frozen=True)

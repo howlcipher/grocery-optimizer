@@ -178,6 +178,193 @@ export const ComparisonResults: React.FC<ComparisonResultsProps> = ({
         </div>
       )}
 
+      {/* Kroger vs Meijer Two-Store Household Comparison (Mission 006) */}
+      {(comparison.kroger_coverage || comparison.meijer_coverage || (comparison.item_comparisons && comparison.item_comparisons.length > 0)) && (
+        <section className="kroger-meijer-comparison-section" style={{ marginBottom: 24 }} aria-label="Kroger versus Meijer price hunt">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+            <h2 style={{ fontSize: "1.25rem", fontWeight: 800, color: "var(--color-text-main)" }}>
+              🛒 Kroger vs Meijer Price Hunt
+            </h2>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {comparison.kroger_coverage && (
+                <span
+                  style={{
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    background: "#eff6ff",
+                    color: "#1d4ed8",
+                    border: "1px solid #bfdbfe",
+                  }}
+                >
+                  🔵 {comparison.kroger_coverage}
+                </span>
+              )}
+              {comparison.meijer_coverage && (
+                <span
+                  style={{
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    background: "#fef2f2",
+                    color: "#b91c1c",
+                    border: "1px solid #fecaca",
+                  }}
+                >
+                  🔴 {comparison.meijer_coverage}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Partial Coverage Warning */}
+          {comparison.is_coverage_complete === false && (
+            <div className="alert-box" style={{ background: "#fffbeb", borderColor: "#fde68a", color: "#92400e", marginBottom: 16 }}>
+              <strong>⚠️ Incomplete Basket Coverage:</strong> One or both stores are missing confirmed prices for some items. We never substitute zero or invent missing prices. Check the item table below for details.
+            </div>
+          )}
+
+          {/* Side-by-Side Store Totals & Split Trip Decision */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 16 }}>
+            {/* Kroger Plan Card */}
+            <div style={{ padding: 14, borderRadius: 8, border: "2px solid #bfdbfe", background: "#f8fafc" }}>
+              <div style={{ fontSize: "0.8rem", fontWeight: 700, textTransform: "uppercase", color: "#1d4ed8", marginBottom: 4 }}>
+                All-Kroger Basket
+              </div>
+              <div style={{ fontSize: "1.4rem", fontWeight: 800 }}>
+                {comparison.kroger_plan?.is_complete
+                  ? formatCents(comparison.kroger_plan.total_cents)
+                  : "Incomplete Basket"}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                {comparison.kroger_plan?.stores?.[0]?.name || "Kroger Store"}
+              </div>
+            </div>
+
+            {/* Meijer Plan Card */}
+            <div style={{ padding: 14, borderRadius: 8, border: "2px solid #fecaca", background: "#f8fafc" }}>
+              <div style={{ fontSize: "0.8rem", fontWeight: 700, textTransform: "uppercase", color: "#b91c1c", marginBottom: 4 }}>
+                All-Meijer Basket
+              </div>
+              <div style={{ fontSize: "1.4rem", fontWeight: 800 }}>
+                {comparison.meijer_plan?.is_complete
+                  ? formatCents(comparison.meijer_plan.total_cents)
+                  : "Incomplete Basket"}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                {comparison.meijer_plan?.stores?.[0]?.name || "Meijer Store"}
+              </div>
+            </div>
+
+            {/* Two-Store Split Plan Card */}
+            <div style={{ padding: 14, borderRadius: 8, border: "2px solid var(--color-primary)", background: "var(--color-primary-light)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: "0.8rem", fontWeight: 700, textTransform: "uppercase", color: "var(--color-primary)" }}>
+                  2-Store Split Trip
+                </span>
+                {comparison.split_gross_savings_cents !== undefined && comparison.split_gross_savings_cents !== null && comparison.split_gross_savings_cents > 0 && (
+                  <span className="savings-badge" style={{ fontSize: "0.75rem", padding: "2px 8px" }}>
+                    Save {formatCents(comparison.split_gross_savings_cents)}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: "1.4rem", fontWeight: 800 }}>
+                {comparison.split_plan?.is_complete
+                  ? formatCents(comparison.split_plan.total_cents)
+                  : "Incomplete Basket"}
+              </div>
+              <div style={{ fontSize: "0.75rem", fontWeight: 600, marginTop: 4 }}>
+                {comparison.extra_stop_justified
+                  ? `✓ Second stop justified (Gross savings exceed threshold)`
+                  : `💡 Second stop not justified (Savings below $3.00 threshold)`}
+              </div>
+            </div>
+          </div>
+
+          {/* Side-by-Side Item Comparisons Table */}
+          {comparison.item_comparisons && comparison.item_comparisons.length > 0 && (
+            <div style={{ border: "1px solid var(--color-border)", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
+              <div style={{ background: "#f8fafc", padding: "10px 16px", borderBottom: "1px solid var(--color-border)", fontWeight: 700, fontSize: "0.95rem" }}>
+                Item Price Comparison (Side-by-Side)
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="plan-items-table" style={{ width: "100%", fontSize: "0.85rem" }}>
+                  <thead>
+                    <tr>
+                      <th scope="col">Product</th>
+                      <th scope="col" style={{ textAlign: "center" }}>Qty</th>
+                      <th scope="col" style={{ textAlign: "right" }}>Kroger Offer</th>
+                      <th scope="col" style={{ textAlign: "right" }}>Meijer Offer</th>
+                      <th scope="col" style={{ textAlign: "center" }}>Cheaper Option</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparison.item_comparisons.map((it) => (
+                      <tr key={it.product_id}>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{it.product_name}</div>
+                          <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                            {it.brand} • {it.package_quantity} {it.package_unit}
+                          </div>
+                        </td>
+                        <td style={{ textAlign: "center", fontWeight: 600 }}>x{it.requested_quantity}</td>
+                        <td style={{ textAlign: "right" }}>
+                          {it.kroger_price_cents !== null && it.kroger_price_cents !== undefined ? (
+                            <div>
+                              <span style={{ fontWeight: 700 }}>{formatCents(it.kroger_price_cents)}</span>
+                              {it.kroger_is_sale && <span className="sale-pill" style={{ marginLeft: 4 }}>Sale</span>}
+                              {it.unit_price_kroger_cents && (
+                                <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                                  {formatCents(it.unit_price_kroger_cents)}/{it.unit_price_unit || "oz"}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span style={{ color: "var(--color-text-muted)", fontStyle: "italic" }}>No price</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          {it.meijer_price_cents !== null && it.meijer_price_cents !== undefined ? (
+                            <div>
+                              <span style={{ fontWeight: 700 }}>{formatCents(it.meijer_price_cents)}</span>
+                              {it.meijer_is_sale && <span className="sale-pill" style={{ marginLeft: 4 }}>Sale</span>}
+                              {it.unit_price_meijer_cents && (
+                                <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                                  {formatCents(it.unit_price_meijer_cents)}/{it.unit_price_unit || "oz"}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span style={{ color: "var(--color-text-muted)", fontStyle: "italic" }}>No price</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: "center" }}>
+                          {it.cheaper_retailer === "kroger" ? (
+                            <span style={{ background: "#eff6ff", color: "#1d4ed8", padding: "2px 8px", borderRadius: 4, fontWeight: 700 }}>
+                              Kroger {it.item_savings_cents > 0 ? `(-${formatCents(it.item_savings_cents)})` : ""}
+                            </span>
+                          ) : it.cheaper_retailer === "meijer" ? (
+                            <span style={{ background: "#fef2f2", color: "#b91c1c", padding: "2px 8px", borderRadius: 4, fontWeight: 700 }}>
+                              Meijer {it.item_savings_cents > 0 ? `(-${formatCents(it.item_savings_cents)})` : ""}
+                            </span>
+                          ) : it.cheaper_retailer === "tie" ? (
+                            <span style={{ color: "var(--color-text-muted)", fontWeight: 600 }}>Equal</span>
+                          ) : (
+                            <span style={{ color: "#b45309", fontSize: "0.75rem", fontWeight: 600 }}>Incomplete</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Summary Cards Grid */}
       <div className="results-summary-grid">
         {/* Best One-Store Trip Card */}

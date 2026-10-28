@@ -1,8 +1,10 @@
 import {
+  BackupImportResponse,
   BatchPriceObservationRequest,
   BatchPriceObservationResponse,
   ComparisonResponse,
   GroceryList,
+  PriceImportParseResponse,
   PriceObservation,
   Product,
   ProductPricesComparisonResponse,
@@ -57,6 +59,30 @@ export const api = {
     return request<Product[]>(`/products?${params.toString()}`);
   },
 
+  async createProduct(data: {
+    name: string;
+    brand?: string;
+    package_quantity?: string;
+    package_unit?: string;
+    category?: string;
+    canonical_group?: string;
+    aliases?: string[];
+    upc?: string;
+  }): Promise<Product> {
+    return request<Product>("/products", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async getEquivalentProducts(productId: string): Promise<Product[]> {
+    return request<Product[]>(`/products/${productId}/equivalents`);
+  },
+
+  async getCanonicalGroups(): Promise<string[]> {
+    return request<string[]>("/products/canonical-groups");
+  },
+
   async createList(name?: string): Promise<GroceryList> {
     return request<GroceryList>("/lists", {
       method: "POST",
@@ -99,9 +125,14 @@ export const api = {
     listId: string,
     source: "demonstration" | "user_contributed" = "demonstration",
     zipCode?: string | null,
-    regionScope: "exact" | "neighborhood" | "regional" = "exact"
+    regionScope: "exact" | "neighborhood" | "regional" = "exact",
+    minimumSavingsThresholdCents = 300
   ): Promise<ComparisonResponse> {
-    const params = new URLSearchParams({ source, region_scope: regionScope });
+    const params = new URLSearchParams({
+      source,
+      region_scope: regionScope,
+      minimum_savings_threshold_cents: String(minimumSavingsThresholdCents),
+    });
     if (zipCode && zipCode.trim()) {
       params.set("zip_code", zipCode.trim());
     }
@@ -250,5 +281,28 @@ export const api = {
     }
     const query = params.toString() ? `?${params.toString()}` : "";
     return request<ProductPricesComparisonResponse>(`/products/${productId}/prices${query}`);
+  },
+
+  async parsePriceImport(text: string, retailerName?: string): Promise<PriceImportParseResponse> {
+    return request<PriceImportParseResponse>("/price-import/parse", {
+      method: "POST",
+      body: JSON.stringify({ text, retailer_name: retailerName || null }),
+    });
+  },
+
+  async exportBackup(): Promise<Blob> {
+    const url = `${BASE_URL}/system/export`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error("Failed to export backup");
+    }
+    return response.blob();
+  },
+
+  async importBackup(data: unknown): Promise<BackupImportResponse> {
+    return request<BackupImportResponse>("/system/import", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   },
 };

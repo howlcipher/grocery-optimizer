@@ -8,6 +8,9 @@ import { RecordPriceModal } from "./components/RecordPriceModal";
 import { ProductPricesModal } from "./components/ProductPricesModal";
 import { StaplesDrawer } from "./components/StaplesDrawer";
 import { PostTripStaplesModal, CandidateStapleItem } from "./components/PostTripStaplesModal";
+import { PriceImportModal } from "./components/PriceImportModal";
+import { CreateProductModal } from "./components/CreateProductModal";
+import { BackupRestoreModal } from "./components/BackupRestoreModal";
 import {
   ComparisonResponse,
   GroceryList as GroceryListType,
@@ -57,6 +60,11 @@ export const App: React.FC = () => {
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
   const [isPostTripModalOpen, setIsPostTripModalOpen] = useState(false);
   const [postTripCandidates, setPostTripCandidates] = useState<CandidateStapleItem[]>([]);
+
+  // Price import, custom product, and backup restore modal state
+  const [isPriceImportOpen, setIsPriceImportOpen] = useState(false);
+  const [isCreateProductOpen, setIsCreateProductOpen] = useState(false);
+  const [isBackupRestoreOpen, setIsBackupRestoreOpen] = useState(false);
 
   const refreshStaples = useCallback(() => {
     setStaples(getStaples());
@@ -391,6 +399,9 @@ export const App: React.FC = () => {
         onOpenRecordPrice={() => handleOpenRecordPriceModal(null, null)}
         onOpenStaples={() => setIsStaplesDrawerOpen(true)}
         staplesCount={staples.length}
+        onOpenPriceImport={() => setIsPriceImportOpen(true)}
+        onOpenCreateProduct={() => setIsCreateProductOpen(true)}
+        onOpenBackupRestore={() => setIsBackupRestoreOpen(true)}
       />
 
       <main className="main-content">
@@ -509,6 +520,33 @@ export const App: React.FC = () => {
         }}
         isProductStaple={isStaple}
         onToggleStaple={handleToggleStaple}
+      />
+
+      <PriceImportModal
+        isOpen={isPriceImportOpen}
+        onClose={() => setIsPriceImportOpen(false)}
+        onObservationsSaved={() => {
+          if (comparison) {
+            handleComparePrices(comparisonSource, selectedZipCode);
+          }
+        }}
+      />
+
+      <CreateProductModal
+        isOpen={isCreateProductOpen}
+        onClose={() => setIsCreateProductOpen(false)}
+        onProductCreated={(newProd) => {
+          setCatalogProducts((prev) => [...prev, newProd]);
+        }}
+      />
+
+      <BackupRestoreModal
+        isOpen={isBackupRestoreOpen}
+        onClose={() => setIsBackupRestoreOpen(false)}
+        onRestoreSuccess={() => {
+          refreshSavedLists();
+          loadOrCreateInitialList();
+        }}
       />
     </div>
   );

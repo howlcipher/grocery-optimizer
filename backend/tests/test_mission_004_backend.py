@@ -127,10 +127,21 @@ def test_batch_atomic_validation_and_rollback(client, db_session):
 
 def test_regional_and_neighborhood_pilot_comparison(client, db_session):
     """Verify comparing lists with region_scope=neighborhood includes adjacent pilot ZIP stores."""
-    # Seed products
-    products = db_session.query(ProductModel).limit(2).all()
+    # Select products isolated from other observation tests
+    products = (
+        db_session.query(ProductModel)
+        .filter(ProductModel.id.in_(["prod-cheerios-12", "prod-ground-beef"]))
+        .order_by(ProductModel.id.asc())
+        .all()
+    )
     assert len(products) >= 2
     p1, p2 = products[0], products[1]
+
+    # Clean up any prior observations for isolated test products
+    db_session.query(PriceObservationModel).filter(
+        PriceObservationModel.product_id.in_([p1.id, p2.id])
+    ).delete(synchronize_session=False)
+    db_session.commit()
 
     # Create a grocery list with both products
     list_resp = client.post("/api/lists", json={"name": "Regional Comparison Trip"})

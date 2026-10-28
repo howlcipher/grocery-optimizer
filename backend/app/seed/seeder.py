@@ -14,22 +14,37 @@ from app.seed.data import SEED_OFFERS, SEED_PRODUCTS, SEED_RETAILERS, SEED_STORE
 def seed_database(db: Session) -> None:
     """Seed retailers, stores, canonical products, and offers deterministically."""
     # Seed Retailers
+    retailer_id_map: dict[str, str] = {}
     for ret in SEED_RETAILERS:
-        existing_ret = db.query(RetailerModel).filter_by(id=ret.id).first()
+        existing_ret = (
+            db.query(RetailerModel)
+            .filter((RetailerModel.id == ret.id) | (RetailerModel.slug == ret.slug))
+            .first()
+        )
         if not existing_ret:
             db.add(RetailerModel(id=ret.id, name=ret.name, slug=ret.slug))
+            retailer_id_map[ret.id] = ret.id
         else:
             existing_ret.name = ret.name
             existing_ret.slug = ret.slug
+            retailer_id_map[ret.id] = existing_ret.id
+
+    db.flush()
 
     # Seed Stores
+    store_id_map: dict[str, str] = {}
     for store in SEED_STORES:
-        existing_store = db.query(StoreModel).filter_by(id=store.id).first()
+        resolved_ret_id = retailer_id_map.get(store.retailer_id, store.retailer_id)
+        existing_store = (
+            db.query(StoreModel)
+            .filter((StoreModel.id == store.id) | (StoreModel.slug == store.slug))
+            .first()
+        )
         if not existing_store:
             db.add(
                 StoreModel(
                     id=store.id,
-                    retailer_id=store.retailer_id,
+                    retailer_id=resolved_ret_id,
                     name=store.name,
                     slug=store.slug,
                     sort_order=store.sort_order,
@@ -37,18 +52,27 @@ def seed_database(db: Session) -> None:
                     city=getattr(store, "city", None),
                     state=getattr(store, "state", None),
                     zip_code=getattr(store, "zip_code", None),
+                    latitude=getattr(store, "latitude", None),
+                    longitude=getattr(store, "longitude", None),
                     is_unresolved_location=getattr(store, "is_unresolved_location", False),
                 )
             )
+            store_id_map[store.id] = store.id
         else:
             existing_store.name = store.name
             existing_store.slug = store.slug
+            existing_store.retailer_id = resolved_ret_id
             existing_store.sort_order = store.sort_order
             existing_store.address = getattr(store, "address", None)
             existing_store.city = getattr(store, "city", None)
             existing_store.state = getattr(store, "state", None)
             existing_store.zip_code = getattr(store, "zip_code", None)
+            existing_store.latitude = getattr(store, "latitude", None)
+            existing_store.longitude = getattr(store, "longitude", None)
             existing_store.is_unresolved_location = getattr(store, "is_unresolved_location", False)
+            store_id_map[store.id] = existing_store.id
+
+    db.flush()
 
     # Seed Products
     for prod in SEED_PRODUCTS:
@@ -63,6 +87,8 @@ def seed_database(db: Session) -> None:
                     package_unit=prod.package_unit,
                     aliases=prod.aliases,
                     upc=prod.upc,
+                    category=getattr(prod, "category", None),
+                    canonical_group=getattr(prod, "canonical_group", None),
                 )
             )
         else:
@@ -72,16 +98,32 @@ def seed_database(db: Session) -> None:
             existing_prod.package_unit = prod.package_unit
             existing_prod.aliases = prod.aliases
             existing_prod.upc = prod.upc
+            existing_prod.category = getattr(prod, "category", None)
+            existing_prod.canonical_group = getattr(prod, "canonical_group", None)
+
+    db.flush()
 
     # Seed Offers
     for off in SEED_OFFERS:
+        resolved_ret_id = retailer_id_map.get(off.retailer_id, off.retailer_id)
+        resolved_store_id = store_id_map.get(off.store_id, off.store_id)
         existing_off = db.query(ProductOfferModel).filter_by(id=off.id).first()
         if not existing_off:
+            existing_pair = (
+                db.query(ProductOfferModel)
+                .filter_by(store_id=resolved_store_id, product_id=off.product_id)
+                .first()
+            )
+            if existing_pair:
+                existing_pair.regular_price_cents = off.regular_price_cents
+                existing_pair.promotional_price_cents = off.promotional_price_cents
+                existing_pair.is_available = off.is_available
+                continue
             db.add(
                 ProductOfferModel(
                     id=off.id,
-                    retailer_id=off.retailer_id,
-                    store_id=off.store_id,
+                    retailer_id=resolved_ret_id,
+                    store_id=resolved_store_id,
                     product_id=off.product_id,
                     retailer_product_id=off.retailer_product_id,
                     regular_price_cents=off.regular_price_cents,
@@ -90,6 +132,8 @@ def seed_database(db: Session) -> None:
                 )
             )
         else:
+            existing_off.retailer_id = resolved_ret_id
+            existing_off.store_id = resolved_store_id
             existing_off.regular_price_cents = off.regular_price_cents
             existing_off.promotional_price_cents = off.promotional_price_cents
             existing_off.is_available = off.is_available

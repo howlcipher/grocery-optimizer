@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 import uuid
 from datetime import UTC, date, datetime
@@ -9,6 +10,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.rate_limiter import rate_limit_batch_observations, rate_limit_observations
 from app.api.schemas import (
+    BackupData,
+    BackupImportResponse,
     BatchPriceObservationCreateRequest,
     BatchPriceObservationResponse,
     ComparisonResponse,
@@ -17,21 +20,29 @@ from app.api.schemas import (
     GroceryListCreateRequest,
     GroceryListResponse,
     GroceryListUpdateRequest,
+    ItemPriceComparisonResponse,
+    ParsedPriceCandidate,
     PlanItemResponse,
+    PriceImportParseRequest,
+    PriceImportParseResponse,
     PriceObservationCreateRequest,
     PriceObservationResponse,
     PriceObservationUpdateRequest,
+    ProductCreateRequest,
     ProductPricesComparisonResponse,
     ProductResponse,
+    ProductUpdateRequest,
     ShoppingPlanResponse,
     StoreResponse,
 )
+from app.catalog.price_parser import parse_price_text
 from app.catalog.search import search_products
 from app.domain.models import (
     GroceryItem,
     Product,
 )
-from app.optimizer.engine import compare_shopping_plans
+from app.domain.unit_pricing import calculate_unit_price
+from app.optimizer.engine import compare_shopping_plans, optimize_shopping_plan
 from app.persistence.database import get_db
 from app.persistence.models import (
     GroceryListItemModel,
@@ -80,6 +91,8 @@ def get_products(
             package_unit=p.package_unit,
             aliases=p.aliases or [],
             upc=p.upc,
+            category=p.category,
+            canonical_group=p.canonical_group,
         )
         for p in product_models
     ]
@@ -93,9 +106,215 @@ def get_products(
             package_quantity=p.package_quantity,
             package_unit=p.package_unit,
             aliases=p.aliases,
+            upc=p.upc,
+            category=p.category,
+            canonical_group=p.canonical_group,
         )
         for p in matched_domain
     ]
+
+
+@router.post(
+    "/products",
+    response_model=ProductResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["catalog"],
+)
+def create_product(
+    body: ProductCreateRequest,
+    db: Session = Depends(get_db),
+):
+    """Add a new product to the household catalog with duplicate prevention."""
+    # Check for existing product with same UPC
+    if body.upc and body.upc.strip():
+        existing_upc = db.query(ProductModel).filter(ProductModel.upc == body.upc.strip()).first()
+        if existing_upc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Product with UPC {body.upc} already exists: {existing_upc.brand} {existing_upc.name}",
+            )
+
+    # Check for exact name + brand + package duplicate
+    existing_exact = (
+        db.query(ProductModel)
+        .filter(
+            func.lower(ProductModel.name) == body.name.strip().lower(),
+            func.lower(ProductModel.brand) == body.brand.strip().lower(),
+            ProductModel.package_quantity == body.package_quantity.strip(),
+            ProductModel.package_unit == body.package_unit.strip().lower(),
+        )
+        .first()
+    )
+    if existing_exact:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Identical product already exists: {existing_exact.brand} {existing_exact.name} ({existing_exact.id})",
+        )
+
+    # Generate stable product ID
+    slug_name = re.sub(r"[^a-z0-9]+", "-", body.name.lower()).strip("-")[:24]
+    slug_brand = re.sub(r"[^a-z0-9]+", "-", body.brand.lower()).strip("-")[:16]
+    product_id = f"prod-{slug_brand}-{slug_name}-{uuid.uuid4().hex[:4]}"
+
+    new_prod = ProductModel(
+        id=product_id,
+        name=body.name.strip(),
+        brand=body.brand.strip(),
+        package_quantity=body.package_quantity.strip(),
+        package_unit=body.package_unit.strip().lower(),
+        aliases=body.aliases or [],
+        upc=body.upc.strip() if body.upc and body.upc.strip() else None,
+        category=body.category.strip() if body.category and body.category.strip() else None,
+        canonical_group=body.canonical_group.strip() if body.canonical_group and body.canonical_group.strip() else None,
+    )
+    db.add(new_prod)
+    db.commit()
+    db.refresh(new_prod)
+    return ProductResponse.model_validate(new_prod)
+
+
+@router.patch(
+    "/products/{product_id}",
+    response_model=ProductResponse,
+    tags=["catalog"],
+)
+def update_product(
+    product_id: str,
+    body: ProductUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Update catalog product metadata."""
+    product = db.query(ProductModel).filter(ProductModel.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    if body.name is not None:
+        product.name = body.name.strip()
+    if body.brand is not None:
+        product.brand = body.brand.strip()
+    if body.package_quantity is not None:
+        product.package_quantity = body.package_quantity.strip()
+    if body.package_unit is not None:
+        product.package_unit = body.package_unit.strip().lower()
+    if body.aliases is not None:
+        product.aliases = body.aliases
+    if body.upc is not None:
+        product.upc = body.upc.strip() if body.upc.strip() else None
+    if body.category is not None:
+        product.category = body.category.strip() if body.category.strip() else None
+    if body.canonical_group is not None:
+        product.canonical_group = body.canonical_group.strip() if body.canonical_group.strip() else None
+
+    db.commit()
+    db.refresh(product)
+    return ProductResponse.model_validate(product)
+
+
+@router.get(
+    "/products/{product_id}/equivalents",
+    response_model=list[ProductResponse],
+    tags=["catalog"],
+)
+def get_equivalent_products(
+    product_id: str,
+    db: Session = Depends(get_db),
+):
+    """Retrieve alternative store-brand and comparable products in the same canonical group."""
+    product = db.query(ProductModel).filter(ProductModel.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    if not product.canonical_group:
+        return [ProductResponse.model_validate(product)]
+
+    equivalents = (
+        db.query(ProductModel)
+        .filter(ProductModel.canonical_group == product.canonical_group)
+        .order_by(ProductModel.name.asc())
+        .all()
+    )
+    return [ProductResponse.model_validate(p) for p in equivalents]
+
+
+@router.get(
+    "/products/canonical-groups",
+    response_model=list[str],
+    tags=["catalog"],
+)
+def get_canonical_groups(db: Session = Depends(get_db)):
+    """Retrieve distinct canonical comparison groups."""
+    groups = (
+        db.query(ProductModel.canonical_group)
+        .filter(ProductModel.canonical_group.isnot(None))
+        .distinct()
+        .order_by(ProductModel.canonical_group.asc())
+        .all()
+    )
+    return [g[0] for g in groups if g[0]]
+
+
+@router.post(
+    "/price-import/parse",
+    response_model=PriceImportParseResponse,
+    tags=["import"],
+)
+def parse_imported_prices(
+    body: PriceImportParseRequest,
+    db: Session = Depends(get_db),
+):
+    """Parse raw text, cart data, or weekly circular text into structured price candidates."""
+    product_models = db.query(ProductModel).all()
+    domain_catalog = [
+        Product(
+            id=p.id,
+            name=p.name,
+            brand=p.brand,
+            package_quantity=p.package_quantity,
+            package_unit=p.package_unit,
+            aliases=p.aliases or [],
+            upc=p.upc,
+            category=p.category,
+            canonical_group=p.canonical_group,
+        )
+        for p in product_models
+    ]
+
+    candidates_raw = parse_price_text(
+        raw_text=body.text,
+        catalog=domain_catalog,
+        retailer_name=body.retailer_name,
+    )
+
+    candidates: list[ParsedPriceCandidate] = [
+        ParsedPriceCandidate(
+            raw_line=c["raw_line"],
+            extracted_name=c["extracted_name"],
+            brand=c.get("brand"),
+            package_size=c.get("package_size"),
+            regular_price_cents=c.get("regular_price_cents"),
+            promotional_price_cents=c.get("promotional_price_cents"),
+            price_cents=c["price_cents"],
+            is_promotional=c.get("is_promotional", False),
+            promo_details=c.get("promo_details"),
+            matched_product_id=c.get("matched_product_id"),
+            matched_product_name=c.get("matched_product_name"),
+            match_confidence=c.get("match_confidence", "unmatched"),
+            canonical_group=c.get("canonical_group"),
+        )
+        for c in candidates_raw
+    ]
+
+    lines_scanned = len([l for l in body.text.splitlines() if l.strip()])
+    matched_count = sum(1 for c in candidates if c.match_confidence in ("high", "medium"))
+
+    return PriceImportParseResponse(
+        retailer_name=body.retailer_name or "Unknown Retailer",
+        store_name=body.store_name,
+        candidates=candidates,
+        total_lines_scanned=lines_scanned,
+        extracted_count=len(candidates),
+        matched_count=matched_count,
+    )
 
 
 @router.post(
@@ -573,6 +792,12 @@ def compare_prices_for_list(
         default="exact",
         description="Scope for ZIP comparison: 'exact' (only specified ZIP) or 'neighborhood' (includes nearby pilot stores)",
     ),
+    minimum_savings_threshold_cents: int = Query(
+        default=300,
+        ge=0,
+        le=5000,
+        description="Minimum gross savings in cents required to justify making a second stop",
+    ),
     db: Session = Depends(get_db),
     provider: RetailerProvider = Depends(get_retailer_provider),
 ):
@@ -580,7 +805,7 @@ def compare_prices_for_list(
 
     Guarantees strict separation between demonstration sample data and user observations.
     Never mixes incompatible sources into a claimed savings figure.
-    Supports physical store geographic filtering by ZIP code and regional pilot neighborhoods.
+    Provides dedicated side-by-side comparison for Kroger vs Meijer household shopping.
     """
     grocery_list = (
         db.query(GroceryListModel)
@@ -652,6 +877,8 @@ def compare_prices_for_list(
             package_unit=p.package_unit,
             aliases=p.aliases or [],
             upc=p.upc,
+            category=p.category,
+            canonical_group=p.canonical_group,
         )
 
     # Load stores via active provider abstraction
@@ -670,7 +897,7 @@ def compare_prices_for_list(
         product_ids=requested_prod_ids, store_ids=store_ids
     )
 
-    # Run pure optimizer
+    # Run standard pure optimizer (preserves M001-M005 behavior)
     result = compare_shopping_plans(
         requested_items=domain_items,
         products_by_id=domain_products,
@@ -717,6 +944,9 @@ def compare_prices_for_list(
                 package_quantity=domain_products[pid].package_quantity,
                 package_unit=domain_products[pid].package_unit,
                 aliases=domain_products[pid].aliases,
+                upc=domain_products[pid].upc,
+                category=domain_products[pid].category,
+                canonical_group=domain_products[pid].canonical_group,
             )
             for pid in plan.missing_product_ids
             if pid in domain_products
@@ -728,6 +958,175 @@ def compare_prices_for_list(
             total_cents=plan.total_cents,
             missing_products=missing_resp,
         )
+
+    # --- Specialized Kroger vs Meijer Household Workflow (Mission 006) ---
+    kroger_stores = [
+        s for s in domain_stores
+        if "kroger" in s.name.lower() or "kroger" in store_retailer_name_map.get(s.id, "").lower()
+    ]
+    meijer_stores = [
+        s for s in domain_stores
+        if "meijer" in s.name.lower() or "meijer" in store_retailer_name_map.get(s.id, "").lower()
+    ]
+
+    # Pre-index offers by (store_id, product_id)
+    offers_by_store_prod = {}
+    for off in domain_offers:
+        key = (off.store_id, off.product_id)
+        if key not in offers_by_store_prod or off.effective_price_cents < offers_by_store_prod[key].effective_price_cents:
+            offers_by_store_prod[key] = off
+
+    # Build equivalent product lookup for canonical groups
+    canonical_group_to_prod_ids: dict[str, list[str]] = {}
+    for p_id, p_obj in domain_products.items():
+        if p_obj.canonical_group:
+            canonical_group_to_prod_ids.setdefault(p_obj.canonical_group, []).append(p_id)
+
+    item_comparisons: list[ItemPriceComparisonResponse] = []
+    for it in domain_items:
+        prod = domain_products[it.product_id]
+        cgroup = prod.canonical_group
+        candidate_prod_ids = [it.product_id]
+        if cgroup and cgroup in canonical_group_to_prod_ids:
+            for eq_id in canonical_group_to_prod_ids[cgroup]:
+                if eq_id not in candidate_prod_ids:
+                    candidate_prod_ids.append(eq_id)
+
+        # Best Kroger offer for this item
+        best_kr_offer = None
+        best_kr_store = None
+        for ks in kroger_stores:
+            for cpid in candidate_prod_ids:
+                cand = offers_by_store_prod.get((ks.id, cpid))
+                if cand and (best_kr_offer is None or cand.effective_price_cents < best_kr_offer.effective_price_cents):
+                    best_kr_offer = cand
+                    best_kr_store = ks
+
+        # Best Meijer offer for this item
+        best_mj_offer = None
+        best_mj_store = None
+        for ms in meijer_stores:
+            for cpid in candidate_prod_ids:
+                cand = offers_by_store_prod.get((ms.id, cpid))
+                if cand and (best_mj_offer is None or cand.effective_price_cents < best_mj_offer.effective_price_cents):
+                    best_mj_offer = cand
+                    best_mj_store = ms
+
+        kr_price = best_kr_offer.effective_price_cents if best_kr_offer else None
+        kr_reg = best_kr_offer.regular_price_cents if best_kr_offer else None
+        kr_is_sale = best_kr_offer.is_on_sale if best_kr_offer else False
+        kr_date = best_kr_offer.observation_date if best_kr_offer else None
+        kr_sname = best_kr_store.name if best_kr_store else None
+
+        mj_price = best_mj_offer.effective_price_cents if best_mj_offer else None
+        mj_reg = best_mj_offer.regular_price_cents if best_mj_offer else None
+        mj_is_sale = best_mj_offer.is_on_sale if best_mj_offer else False
+        mj_date = best_mj_offer.observation_date if best_mj_offer else None
+        mj_sname = best_mj_store.name if best_mj_store else None
+
+        # Calculate unit prices
+        kr_unit = calculate_unit_price(kr_price, prod.package_quantity, prod.package_unit) if kr_price else None
+        mj_unit = calculate_unit_price(mj_price, prod.package_quantity, prod.package_unit) if mj_price else None
+        unit_label = kr_unit[1] if kr_unit else (mj_unit[1] if mj_unit else None)
+
+        cheaper_ret = None
+        item_savings = 0
+        if kr_price is not None and mj_price is not None:
+            if kr_price < mj_price:
+                cheaper_ret = "kroger"
+                item_savings = (mj_price - kr_price) * it.quantity
+            elif mj_price < kr_price:
+                cheaper_ret = "meijer"
+                item_savings = (kr_price - mj_price) * it.quantity
+            else:
+                cheaper_ret = "tie"
+        elif kr_price is not None:
+            cheaper_ret = "kroger"
+        elif mj_price is not None:
+            cheaper_ret = "meijer"
+        else:
+            cheaper_ret = "incomplete"
+
+        item_comparisons.append(
+            ItemPriceComparisonResponse(
+                product_id=prod.id,
+                product_name=prod.name,
+                brand=prod.brand,
+                package_quantity=prod.package_quantity,
+                package_unit=prod.package_unit,
+                requested_quantity=it.quantity,
+                kroger_price_cents=kr_price,
+                kroger_regular_price_cents=kr_reg,
+                kroger_is_sale=kr_is_sale,
+                kroger_date=kr_date,
+                kroger_store_name=kr_sname,
+                meijer_price_cents=mj_price,
+                meijer_regular_price_cents=mj_reg,
+                meijer_is_sale=mj_is_sale,
+                meijer_date=mj_date,
+                meijer_store_name=mj_sname,
+                cheaper_retailer=cheaper_ret,
+                item_savings_cents=item_savings,
+                unit_price_kroger_cents=kr_unit[0] if kr_unit else None,
+                unit_price_meijer_cents=mj_unit[0] if mj_unit else None,
+                unit_price_unit=unit_label,
+            )
+        )
+
+    # Coverage metrics
+    total_items = len(domain_items)
+    kr_cov_count = sum(1 for itm in item_comparisons if itm.kroger_price_cents is not None)
+    mj_cov_count = sum(1 for itm in item_comparisons if itm.meijer_price_cents is not None)
+    kroger_coverage = f"{kr_cov_count} of {total_items} products have known Kroger prices"
+    meijer_coverage = f"{mj_cov_count} of {total_items} products have known Meijer prices"
+    kroger_ratio = round(kr_cov_count / total_items, 2) if total_items > 0 else 0.0
+    meijer_ratio = round(mj_cov_count / total_items, 2) if total_items > 0 else 0.0
+
+    # Dedicated single-retailer plans
+    kroger_plan_resp = None
+    if kroger_stores:
+        kr_plan = optimize_shopping_plan(
+            domain_items, domain_products, domain_offers, kroger_stores, max_stores=1
+        )
+        kroger_plan_resp = to_plan_response(kr_plan)
+
+    meijer_plan_resp = None
+    if meijer_stores:
+        mj_plan = optimize_shopping_plan(
+            domain_items, domain_products, domain_offers, meijer_stores, max_stores=1
+        )
+        meijer_plan_resp = to_plan_response(mj_plan)
+
+    # 2-Store split trip between Kroger and Meijer
+    split_plan_resp = None
+    split_gross_savings = None
+    extra_stop_justified = False
+    target_two_stores = kroger_stores + meijer_stores
+    if target_two_stores:
+        km_split = optimize_shopping_plan(
+            domain_items, domain_products, domain_offers, target_two_stores, max_stores=2
+        )
+        split_plan_resp = to_plan_response(km_split)
+
+        # Calculate gross savings comparing best complete single store vs split
+        single_totals = []
+        if kroger_plan_resp and kroger_plan_resp.is_complete:
+            single_totals.append(kroger_plan_resp.total_cents)
+        if meijer_plan_resp and meijer_plan_resp.is_complete:
+            single_totals.append(meijer_plan_resp.total_cents)
+
+        if single_totals and split_plan_resp.is_complete:
+            cheapest_single = min(single_totals)
+            split_gross_savings = max(0, cheapest_single - split_plan_resp.total_cents)
+            extra_stop_justified = split_gross_savings >= minimum_savings_threshold_cents
+
+    # Comparison Status
+    if kr_cov_count == total_items and mj_cov_count == total_items:
+        comparison_status = "complete"
+    elif kr_cov_count > 0 or mj_cov_count > 0:
+        comparison_status = "incomplete_coverage"
+    else:
+        comparison_status = "no_prices"
 
     return ComparisonResponse(
         one_store_plan=to_plan_response(result.one_store_plan),
@@ -741,6 +1140,18 @@ def compare_prices_for_list(
         zip_code=zip_code,
         region_scope=region_scope,
         compared_zip_codes=compared_zips,
+        kroger_plan=kroger_plan_resp,
+        meijer_plan=meijer_plan_resp,
+        kroger_coverage=kroger_coverage,
+        meijer_coverage=meijer_coverage,
+        kroger_coverage_ratio=kroger_ratio,
+        meijer_coverage_ratio=meijer_ratio,
+        split_plan=split_plan_resp,
+        split_gross_savings_cents=split_gross_savings,
+        extra_stop_justified=extra_stop_justified,
+        minimum_savings_threshold_cents=minimum_savings_threshold_cents,
+        comparison_status=comparison_status,
+        item_comparisons=item_comparisons,
     )
 
 
@@ -1245,4 +1656,247 @@ def compare_product_store_prices(
         store_count=len(unique_stores),
         source="user_contributed",
     )
+
+
+@router.get("/system/export", response_model=BackupData, tags=["system"])
+def export_system_backup(db: Session = Depends(get_db)):
+    """Export complete household database backup as plaintext JSON.
+
+    Protects lists, custom products, stores, and price observations.
+    Redacts internal edit token hashes for security.
+    """
+    prods = db.query(ProductModel).all()
+    gls = db.query(GroceryListModel).options(joinedload(GroceryListModel.items)).all()
+    obs = db.query(PriceObservationModel).all()
+    stores = db.query(StoreModel).all()
+    retailers = db.query(RetailerModel).all()
+
+    return BackupData(
+        version="1.0",
+        exported_at=datetime.now(UTC).isoformat(),
+        app_version="0.6.0",
+        products=[
+            {
+                "id": p.id,
+                "name": p.name,
+                "brand": p.brand,
+                "package_quantity": p.package_quantity,
+                "package_unit": p.package_unit,
+                "aliases": p.aliases,
+                "upc": p.upc,
+                "category": p.category,
+                "canonical_group": p.canonical_group,
+            }
+            for p in prods
+        ],
+        grocery_lists=[
+            {
+                "id": l.id,
+                "name": l.name,
+                "created_at": l.created_at.isoformat() if l.created_at else None,
+                "updated_at": l.updated_at.isoformat() if l.updated_at else None,
+                "items": [
+                    {
+                        "id": itm.id,
+                        "product_id": itm.product_id,
+                        "quantity": itm.quantity,
+                    }
+                    for itm in l.items
+                ],
+            }
+            for l in gls
+        ],
+        price_observations=[
+            {
+                "id": o.id,
+                "product_id": o.product_id,
+                "store_id": o.store_id,
+                "store_name": o.store_name,
+                "price_cents": o.price_cents,
+                "observation_date": o.observation_date.isoformat() if o.observation_date else None,
+                "is_promotional": o.is_promotional,
+                "notes": o.notes,
+                "contributor_id": o.contributor_id,
+            }
+            for o in obs
+        ],
+        stores=[
+            {
+                "id": s.id,
+                "retailer_id": s.retailer_id,
+                "name": s.name,
+                "slug": s.slug,
+                "sort_order": s.sort_order,
+                "address": s.address,
+                "city": s.city,
+                "state": s.state,
+                "zip_code": s.zip_code,
+                "latitude": s.latitude,
+                "longitude": s.longitude,
+                "is_unresolved_location": s.is_unresolved_location,
+            }
+            for s in stores
+        ],
+        retailers=[
+            {
+                "id": r.id,
+                "name": r.name,
+                "slug": r.slug,
+            }
+            for r in retailers
+        ],
+    )
+
+
+@router.post("/system/import", response_model=BackupImportResponse, tags=["system"])
+def import_system_backup(data: BackupData, db: Session = Depends(get_db)):
+    """Import plaintext JSON backup safely in an atomic transaction."""
+    if not data.version or not isinstance(data.products, list) or not isinstance(data.grocery_lists, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid backup structure: missing version or essential collections",
+        )
+
+    imported_prods = 0
+    imported_lists = 0
+    imported_items = 0
+    imported_obs = 0
+
+    try:
+        # 1. Retailers
+        for r_dict in data.retailers:
+            r_id = r_dict.get("id")
+            if r_id and not db.get(RetailerModel, r_id):
+                db.add(RetailerModel(id=r_id, name=r_dict["name"], slug=r_dict["slug"]))
+        db.flush()
+
+        # 2. Stores
+        for s_dict in data.stores:
+            s_id = s_dict.get("id")
+            if s_id and not db.get(StoreModel, s_id):
+                db.add(
+                    StoreModel(
+                        id=s_id,
+                        retailer_id=s_dict["retailer_id"],
+                        name=s_dict["name"],
+                        slug=s_dict["slug"],
+                        sort_order=s_dict.get("sort_order", 0),
+                        address=s_dict.get("address"),
+                        city=s_dict.get("city"),
+                        state=s_dict.get("state"),
+                        zip_code=s_dict.get("zip_code"),
+                        latitude=s_dict.get("latitude"),
+                        longitude=s_dict.get("longitude"),
+                        is_unresolved_location=s_dict.get("is_unresolved_location", False),
+                    )
+                )
+        db.flush()
+
+        # 3. Products
+        for p_dict in data.products:
+            p_id = p_dict.get("id")
+            if p_id and not db.get(ProductModel, p_id):
+                db.add(
+                    ProductModel(
+                        id=p_id,
+                        name=p_dict["name"],
+                        brand=p_dict["brand"],
+                        package_quantity=p_dict["package_quantity"],
+                        package_unit=p_dict["package_unit"],
+                        aliases=p_dict.get("aliases", []),
+                        upc=p_dict.get("upc"),
+                        category=p_dict.get("category"),
+                        canonical_group=p_dict.get("canonical_group"),
+                    )
+                )
+                imported_prods += 1
+        db.flush()
+
+        # 4. Grocery Lists & Items
+        for l_dict in data.grocery_lists:
+            l_id = l_dict.get("id")
+            if not l_id:
+                continue
+            existing_list = db.get(GroceryListModel, l_id)
+            if not existing_list:
+                new_list = GroceryListModel(
+                    id=l_id,
+                    name=l_dict.get("name"),
+                )
+                db.add(new_list)
+                imported_lists += 1
+            db.flush()
+
+            for itm in l_dict.get("items", []):
+                itm_id = itm.get("id") or str(uuid.uuid4())
+                existing_item = db.get(GroceryListItemModel, itm_id)
+                if not existing_item:
+                    dup = (
+                        db.query(GroceryListItemModel)
+                        .filter(
+                            GroceryListItemModel.list_id == l_id,
+                            GroceryListItemModel.product_id == itm["product_id"],
+                        )
+                        .first()
+                    )
+                    if not dup and db.get(ProductModel, itm["product_id"]):
+                        db.add(
+                            GroceryListItemModel(
+                                id=itm_id,
+                                list_id=l_id,
+                                product_id=itm["product_id"],
+                                quantity=itm.get("quantity", 1),
+                            )
+                        )
+                        imported_items += 1
+        db.flush()
+
+        # 5. Price Observations
+        for o_dict in data.price_observations:
+            o_id = o_dict.get("id")
+            if not o_id or db.get(PriceObservationModel, o_id):
+                continue
+            if not db.get(ProductModel, o_dict["product_id"]):
+                continue
+
+            obs_date_str = o_dict.get("observation_date")
+            try:
+                obs_date = date.fromisoformat(obs_date_str) if obs_date_str else date.today()
+            except (ValueError, TypeError):
+                obs_date = date.today()
+
+            db.add(
+                PriceObservationModel(
+                    id=o_id,
+                    product_id=o_dict["product_id"],
+                    store_id=o_dict.get("store_id"),
+                    store_name=o_dict.get("store_name", "Unknown Store"),
+                    price_cents=o_dict["price_cents"],
+                    observation_date=obs_date,
+                    is_promotional=o_dict.get("is_promotional", False),
+                    notes=o_dict.get("notes"),
+                    contributor_id=o_dict.get("contributor_id"),
+                )
+            )
+            imported_obs += 1
+
+        db.commit()
+        return BackupImportResponse(
+            status="success",
+            message="Backup imported successfully into local database.",
+            imported_products_count=imported_prods,
+            imported_lists_count=imported_lists,
+            imported_items_count=imported_items,
+            imported_observations_count=imported_obs,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to restore backup, transaction rolled back safely: {e!s}",
+        )
+
 

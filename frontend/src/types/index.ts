@@ -5,6 +5,9 @@ export interface Product {
   package_quantity: string;
   package_unit: string;
   aliases: string[];
+  category?: string | null;
+  canonical_group?: string | null;
+  upc?: string | null;
 }
 
 export interface GroceryItem {
@@ -58,6 +61,30 @@ export interface ShoppingPlanResponse {
   missing_products: Product[];
 }
 
+export interface ItemPriceComparison {
+  product_id: string;
+  product_name: string;
+  brand: string;
+  package_quantity: string;
+  package_unit: string;
+  requested_quantity: number;
+  kroger_price_cents?: number | null;
+  kroger_regular_price_cents?: number | null;
+  kroger_is_sale: boolean;
+  kroger_date?: string | null;
+  kroger_store_name?: string | null;
+  meijer_price_cents?: number | null;
+  meijer_regular_price_cents?: number | null;
+  meijer_is_sale: boolean;
+  meijer_date?: string | null;
+  meijer_store_name?: string | null;
+  cheaper_retailer?: "kroger" | "meijer" | "tie" | "incomplete" | null;
+  item_savings_cents: number;
+  unit_price_kroger_cents?: number | null;
+  unit_price_meijer_cents?: number | null;
+  unit_price_unit?: string | null;
+}
+
 export interface ComparisonResponse {
   one_store_plan: ShoppingPlanResponse;
   best_plan: ShoppingPlanResponse;
@@ -70,6 +97,18 @@ export interface ComparisonResponse {
   zip_code?: string | null;
   region_scope?: string | null;
   compared_zip_codes?: string[];
+  // Mission 006 Two-Store Side-by-Side:
+  kroger_plan?: ShoppingPlanResponse | null;
+  meijer_plan?: ShoppingPlanResponse | null;
+  split_plan?: ShoppingPlanResponse | null;
+  split_gross_savings_cents?: number | null;
+  extra_stop_justified?: boolean;
+  kroger_coverage?: string | null;
+  meijer_coverage?: string | null;
+  kroger_coverage_ratio?: number | null;
+  meijer_coverage_ratio?: number | null;
+  is_coverage_complete?: boolean;
+  item_comparisons?: ItemPriceComparison[];
 }
 
 export interface SavedListMetadata {
@@ -203,4 +242,36 @@ export interface PriceTrendInfo {
   trend_direction: "down" | "up" | "equal" | "insufficient_data" | "no_data";
   summary: string;
 }
+
+export interface ParsedPriceCandidate {
+  raw_line: string;
+  extracted_name: string;
+  brand?: string | null;
+  package_size?: string | null;
+  regular_price_cents?: number | null;
+  promotional_price_cents?: number | null;
+  price_cents: number;
+  is_promotional: boolean;
+  promo_details?: string | null;
+  matched_product_id?: string | null;
+  matched_product_name?: string | null;
+  match_confidence: "high" | "medium" | "unmatched";
+  canonical_group?: string | null;
+}
+
+export interface PriceImportParseResponse {
+  candidates: ParsedPriceCandidate[];
+  unmatched_count: number;
+  matched_count: number;
+}
+
+export interface BackupImportResponse {
+  status: string;
+  message: string;
+  imported_products_count: number;
+  imported_lists_count: number;
+  imported_items_count: number;
+  imported_observations_count: number;
+}
+
 

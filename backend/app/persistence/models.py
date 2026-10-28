@@ -63,6 +63,8 @@ class ProductModel(Base):
     package_unit = Column(String(32), nullable=False)
     aliases = Column(JSON, nullable=False, default=list)
     upc = Column(String(64), nullable=True, index=True)
+    category = Column(String(64), nullable=True, index=True)
+    canonical_group = Column(String(64), nullable=True, index=True)
 
     offers = relationship("ProductOfferModel", back_populates="product", cascade="all, delete-orphan")
 

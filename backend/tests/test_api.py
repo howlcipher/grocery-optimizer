@@ -2,13 +2,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.persistence.database import SessionLocal
+from app.persistence.database import Base, SessionLocal, engine
 from app.seed.seeder import seed_database
 
 
 @pytest.fixture(scope="module")
 def client():
-    # Ensure seed data is populated
+    # Ensure tables and seed data are populated
+    Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
         seed_database(db)
